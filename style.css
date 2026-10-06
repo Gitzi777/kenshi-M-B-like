@@ -1,0 +1,62 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1610; font-family: system-ui, sans-serif; color: #f1e6d2; }
+canvas#game { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+
+.panel {
+  position: absolute;
+  background: rgba(30, 24, 16, 0.88);
+  border: 1px solid #6b5536;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+.panel h3 { margin: 0 0 8px; font-size: 15px; color: #ffcf7a; }
+.hidden { display: none !important; }
+
+button {
+  background: #6b5536; color: #fff; border: 1px solid #a68655; border-radius: 4px;
+  padding: 3px 8px; cursor: pointer; font-size: 13px;
+}
+button:hover { background: #8a6d44; }
+button:disabled { opacity: .4; cursor: default; }
+
+#topbar {
+  position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 18px; align-items: center;
+  padding: 6px 12px; background: rgba(20, 15, 10, 0.8); font-size: 15px;
+}
+#topbar #helpBtn { margin-left: auto; }
+
+#squad { top: 44px; left: 10px; width: 210px; }
+.member { padding: 4px; border-radius: 4px; cursor: pointer; margin-bottom: 3px; }
+.member:hover { background: rgba(255,255,255,.07); }
+.member.sel { background: rgba(255, 207, 122, .18); }
+.member .bar { height: 5px; background: #3a2a1a; border-radius: 3px; margin-top: 2px; }
+.member .bar div { height: 100%; background: #6fcf5a; border-radius: 3px; }
+.member small { color: #bfae90; }
+
+#town { top: 44px; right: 10px; width: 300px; }
+#town table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+#town td, #town th { padding: 3px 2px; text-align: left; }
+#town th { color: #bfae90; font-weight: normal; font-size: 12px; }
+#town .note { color: #bfae90; font-size: 12px; }
+
+#log {
+  position: absolute; left: 10px; bottom: 10px; width: 380px; max-width: calc(100vw - 230px);
+  font-size: 13px; pointer-events: none;
+}
+#log div { background: rgba(20,15,10,.7); padding: 2px 6px; margin-top: 2px; border-radius: 3px; }
+
+#minimap {
+  position: absolute; right: 10px; bottom: 10px; border: 1px solid #6b5536; border-radius: 4px;
+  background: #2a2117; cursor: pointer;
+}
+
+#help { top: 50%; left: 50%; transform: translate(-50%, -50%); width: 420px; max-width: calc(100vw - 32px); }
+#help ul { padding-left: 18px; }
+#gameover { top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+
+@media (max-width: 700px) {
+  #squad { width: 160px; }
+  #town { width: 240px; }
+  #minimap { display: none; }
+}

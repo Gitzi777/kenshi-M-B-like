@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terres Arides</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="topbar">
+    <span>💰 <b id="money">0</b></span>
+    <span>🍖 <b id="food">0</b></span>
+    <span>📦 <b id="cargo">0/0</b></span>
+    <span>☀️ Jour <b id="day">1</b></span>
+    <button id="helpBtn">Aide (H)</button>
+  </div>
+
+  <div id="squad" class="panel">
+    <h3>Escouade</h3>
+    <div id="squadList"></div>
+    <small>E : tout sélectionner</small>
+  </div>
+
+  <div id="town" class="panel hidden"></div>
+
+  <div id="log"></div>
+
+  <canvas id="minimap" width="200" height="150"></canvas>
+
+  <div id="help" class="panel">
+    <h3>Comment jouer</h3>
+    <ul>
+      <li><b>Clic gauche</b> : sélectionner un perso (glisser = plusieurs)</li>
+      <li><b>Clic droit</b> : se déplacer / attaquer un ennemi</li>
+      <li><b>ZQSD / WASD / flèches</b> : bouger la caméra</li>
+      <li><b>Molette</b> : zoom — <b>Espace</b> : centrer sur l'escouade</li>
+      <li><b>E</b> : tout sélectionner — <b>P</b> : pause</li>
+    </ul>
+    <p>Achète bon marché dans une ville, revends plus cher dans une autre.
+      Recrute des combattants en ville. Les bandits rôdent hors des murs.
+      Chaque jour, chaque membre mange 1 nourriture. En ville, on se soigne.</p>
+    <button id="closeHelp">Jouer</button>
+  </div>
+
+  <div id="gameover" class="panel hidden">
+    <h2>Ton escouade est tombée…</h2>
+    <p id="goStats"></p>
+    <button id="restart">Recommencer</button>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
