@@ -7,49 +7,61 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <canvas id="game"></canvas>
+  <div id="view"></div>
 
-  <div id="topbar">
-    <span>💰 <b id="money">0</b></span>
-    <span>🍖 <b id="food">0</b></span>
-    <span>📦 <b id="cargo">0/0</b></span>
-    <span>☀️ Jour <b id="day">1</b></span>
-    <button id="helpBtn">Aide (H)</button>
+  <!-- Création du personnage -->
+  <div id="creation" class="panel">
+    <h2>Créer ton personnage</h2>
+    <label>Nom <input id="cName" maxlength="16" value="Vagabond"></label>
+
+    <div class="label">Origine</div>
+    <div id="cOrigins" class="choices"></div>
+
+    <div class="label">Tenue</div>
+    <div id="cBody" class="swatches"></div>
+    <div class="label">Peau</div>
+    <div id="cSkin" class="swatches"></div>
+    <div class="label">Taille</div>
+    <input id="cHeight" type="range" min="0.9" max="1.1" step="0.01" value="1">
+
+    <div class="label">Caractéristiques <span id="cPoints"></span></div>
+    <div id="cStats"></div>
+
+    <button id="cStart" class="big">Commencer</button>
   </div>
 
-  <div id="squad" class="panel">
-    <h3>Escouade</h3>
-    <div id="squadList"></div>
-    <small>E : tout sélectionner</small>
+  <!-- Interface en jeu -->
+  <div id="hud" class="hidden">
+    <div id="topbar">
+      <span>💰 <b id="money">0</b></span>
+      <span>🍖 <b id="food">0</b></span>
+      <span>📦 <b id="cargo">0/0</b></span>
+      <span>☀️ Jour <b id="day">1</b></span>
+      <span id="orderLabel"></span>
+    </div>
+    <div id="player" class="panel">
+      <b id="pName"></b> <small id="pLevel"></small>
+      <div class="bar big"><div id="pHp"></div></div>
+      <small id="pHpText"></small>
+      <div id="squadList"></div>
+    </div>
+    <div id="prompt" class="hidden"></div>
+    <div id="log"></div>
+    <canvas id="minimap" width="180" height="180"></canvas>
+    <div id="controls" class="panel">
+      <b>Clic</b> : capturer la souris / frapper · <b>Clic droit</b> : parer<br>
+      <b>ZQSD/WASD</b> : bouger · <b>Maj</b> : courir · <b>Molette</b> : zoom<br>
+      <b>E</b> : ville · <b>1</b> suivez-moi · <b>2</b> chargez · <b>3</b> tenez la position<br>
+      <b>Échap</b> : libérer la souris
+    </div>
+    <div id="crosshair">+</div>
   </div>
 
   <div id="town" class="panel hidden"></div>
+  <div id="ko" class="hidden"><h1>K.O.</h1><p id="koText"></p></div>
+  <div id="floats"></div>
 
-  <div id="log"></div>
-
-  <canvas id="minimap" width="200" height="150"></canvas>
-
-  <div id="help" class="panel">
-    <h3>Comment jouer</h3>
-    <ul>
-      <li><b>Clic gauche</b> : sélectionner un perso (glisser = plusieurs)</li>
-      <li><b>Clic droit</b> : se déplacer / attaquer un ennemi</li>
-      <li><b>ZQSD / WASD / flèches</b> : bouger la caméra</li>
-      <li><b>Molette</b> : zoom — <b>Espace</b> : centrer sur l'escouade</li>
-      <li><b>E</b> : tout sélectionner — <b>P</b> : pause</li>
-    </ul>
-    <p>Achète bon marché dans une ville, revends plus cher dans une autre.
-      Recrute des combattants en ville. Les bandits rôdent hors des murs.
-      Chaque jour, chaque membre mange 1 nourriture. En ville, on se soigne.</p>
-    <button id="closeHelp">Jouer</button>
-  </div>
-
-  <div id="gameover" class="panel hidden">
-    <h2>Ton escouade est tombée…</h2>
-    <p id="goStats"></p>
-    <button id="restart">Recommencer</button>
-  </div>
-
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

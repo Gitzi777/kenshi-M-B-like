@@ -1,17 +1,17 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1610; font-family: system-ui, sans-serif; color: #f1e6d2; }
-canvas#game { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+#view, #view canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
 .panel {
   position: absolute;
-  background: rgba(30, 24, 16, 0.88);
+  background: rgba(30, 24, 16, 0.86);
   border: 1px solid #6b5536;
   border-radius: 8px;
   padding: 10px 12px;
   font-size: 14px;
 }
-.panel h3 { margin: 0 0 8px; font-size: 15px; color: #ffcf7a; }
 .hidden { display: none !important; }
+h2, h3 { margin: 0 0 8px; color: #ffcf7a; }
 
 button {
   background: #6b5536; color: #fff; border: 1px solid #a68655; border-radius: 4px;
@@ -19,44 +19,62 @@ button {
 }
 button:hover { background: #8a6d44; }
 button:disabled { opacity: .4; cursor: default; }
+button.big { width: 100%; padding: 10px; font-size: 16px; margin-top: 12px; background: #9a5a22; }
+input { background: #2a2117; color: #fff; border: 1px solid #6b5536; border-radius: 4px; padding: 4px 6px; }
 
+/* Création */
+#creation { top: 20px; left: 20px; bottom: 20px; width: 340px; overflow-y: auto; }
+#creation .label { margin: 12px 0 4px; color: #bfae90; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+#creation label input { width: 100%; margin-top: 4px; }
+#cHeight { width: 100%; }
+.choices { display: grid; gap: 6px; }
+.choice { border: 1px solid #6b5536; border-radius: 6px; padding: 6px 8px; cursor: pointer; }
+.choice.sel { border-color: #ffcf7a; background: rgba(255, 207, 122, .12); }
+.choice small { color: #bfae90; display: block; }
+.swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+.swatch { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
+.swatch.sel { border-color: #fff; }
+.stat { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.stat span:first-child { width: 90px; }
+.stat b { width: 24px; text-align: center; }
+.stat small { color: #bfae90; }
+
+/* HUD */
 #topbar {
   position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 18px; align-items: center;
-  padding: 6px 12px; background: rgba(20, 15, 10, 0.8); font-size: 15px;
+  padding: 6px 12px; background: rgba(20, 15, 10, 0.75); font-size: 15px;
 }
-#topbar #helpBtn { margin-left: auto; }
+#orderLabel { margin-left: auto; color: #9fd3ff; }
+#player { top: 44px; left: 10px; width: 220px; }
+.bar { height: 6px; background: #3a2a1a; border-radius: 3px; margin: 3px 0; }
+.bar.big { height: 10px; }
+.bar div { height: 100%; background: #6fcf5a; border-radius: 3px; }
+#squadList { margin-top: 8px; }
+.member { font-size: 12px; margin-top: 4px; }
+#prompt {
+  position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%);
+  background: rgba(20, 15, 10, .85); padding: 6px 14px; border-radius: 6px; border: 1px solid #a68655;
+}
+#log { position: absolute; left: 10px; bottom: 10px; width: 400px; max-width: calc(100vw - 220px); font-size: 13px; pointer-events: none; }
+#log div { background: rgba(20,15,10,.7); padding: 2px 6px; margin-top: 2px; border-radius: 3px; }
+#minimap { position: absolute; right: 10px; top: 44px; border: 1px solid #6b5536; border-radius: 50%; }
+#controls { right: 10px; bottom: 10px; font-size: 12px; line-height: 1.6; color: #d8c8a8; }
+#crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,.5); pointer-events: none; }
 
-#squad { top: 44px; left: 10px; width: 210px; }
-.member { padding: 4px; border-radius: 4px; cursor: pointer; margin-bottom: 3px; }
-.member:hover { background: rgba(255,255,255,.07); }
-.member.sel { background: rgba(255, 207, 122, .18); }
-.member .bar { height: 5px; background: #3a2a1a; border-radius: 3px; margin-top: 2px; }
-.member .bar div { height: 100%; background: #6fcf5a; border-radius: 3px; }
-.member small { color: #bfae90; }
-
-#town { top: 44px; right: 10px; width: 300px; }
+#town { top: 50%; left: 50%; transform: translate(-50%, -50%); width: 380px; max-width: calc(100vw - 32px); }
 #town table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
 #town td, #town th { padding: 3px 2px; text-align: left; }
 #town th { color: #bfae90; font-weight: normal; font-size: 12px; }
-#town .note { color: #bfae90; font-size: 12px; }
+#town .note { color: #bfae90; font-size: 12px; margin: 4px 0; }
+#town hr { border-color: #6b5536; }
 
-#log {
-  position: absolute; left: 10px; bottom: 10px; width: 380px; max-width: calc(100vw - 230px);
-  font-size: 13px; pointer-events: none;
-}
-#log div { background: rgba(20,15,10,.7); padding: 2px 6px; margin-top: 2px; border-radius: 3px; }
+#ko { position: absolute; inset: 0; background: rgba(60, 0, 0, .55); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+#ko h1 { font-size: 64px; margin: 0; }
 
-#minimap {
-  position: absolute; right: 10px; bottom: 10px; border: 1px solid #6b5536; border-radius: 4px;
-  background: #2a2117; cursor: pointer;
-}
-
-#help { top: 50%; left: 50%; transform: translate(-50%, -50%); width: 420px; max-width: calc(100vw - 32px); }
-#help ul { padding-left: 18px; }
-#gameover { top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+#floats { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.float { position: absolute; font-weight: bold; font-size: 15px; transform: translate(-50%, -50%); text-shadow: 0 1px 2px #000; }
 
 @media (max-width: 700px) {
-  #squad { width: 160px; }
-  #town { width: 240px; }
-  #minimap { display: none; }
+  #controls, #minimap { display: none; }
+  #creation { left: 10px; right: 10px; width: auto; }
 }
