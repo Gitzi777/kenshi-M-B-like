@@ -338,8 +338,37 @@ function hostileF(a, b) {
 }
 const isFugitiveFor = (o, fid) => o.fugitive && o.fugitive.f === fid && (state.clock || 0) < o.fugitive.until;
 const hostile = (u, o) => hostileF(u.faction, o.faction) || u.angryAt === o || o.angryAt === u || isFugitiveFor(o, u.faction) || isFugitiveFor(u, o.faction);
-// ton camp peut frapper tout le monde sauf lui-même
-const canHit = (u, o) => o !== u && (isPlayerSide(u) ? !isPlayerSide(o) : hostile(u, o));
+// ton camp ne frappe que ses ennemis, sauf si l'option « frapper les neutres » est active
+// (ou si on donne l'ordre d'attaquer précisément cette cible)
+const canHit = (u, o) => o !== u && (isPlayerSide(u)
+  ? !isPlayerSide(o) && !!(settings.hitNeutrals || hostile(u, o) || o.animal || (u.cmd && u.cmd.type === 'attack' && u.cmd.target === o))
+  : hostile(u, o));
+
+// ---------- Murs entre deux points (coups, flèches, chemins) ----------
+const hasRing = s => s.type !== 'repaire';
+const ringGap = s => (s.type === 'ville' ? 0.15 : 0.22) * 34 / s.r;
+// la ligne a→b traverse-t-elle l'enceinte d'une ville ailleurs qu'à la porte ?
+function ringBetween(a, b) {
+  const vx = b.x - a.x, vz = b.z - a.z, A = vx * vx + vz * vz;
+  if (A < 1e-9) return false;
+  for (const s of state.settlements) {
+    if (!hasRing(s)) continue;
+    const fx = a.x - s.x, fz = a.z - s.z;
+    if (Math.abs(fx) > s.r + 80 || Math.abs(fz) > s.r + 80) continue;
+    // intersections du segment avec le cercle du mur
+    const B = 2 * (fx * vx + fz * vz), C = fx * fx + fz * fz - s.r * s.r;
+    const disc = B * B - 4 * A * C;
+    if (disc <= 0) continue;
+    const sq = Math.sqrt(disc);
+    for (const t of [(-B - sq) / (2 * A), (-B + sq) / (2 * A)]) {
+      if (t < 0 || t > 1) continue;
+      const cx = fx + vx * t, cz = fz + vz * t;
+      if (Math.abs(angleDiff(Math.atan2(cz, cx), s.gate)) > ringGap(s)) return true;
+    }
+  }
+  return false;
+}
+const blockedBetween = (a, b) => ringBetween(a, b) || wallBetween(a, b);
 
 function playerAttacked(fid) {
   if (!F(fid) || playerHostileTo(fid)) return;
@@ -368,7 +397,7 @@ function startAttack(u, dir) {
   const reach = weaponOf(u).reach;
   for (const o of units) {
     if (o === u || o.isPlayer || o.animal || !alive(o) || !canHit(u, o) || o.atk || o.mode === 'bow') continue;
-    if (d2(u.pos, o.pos) > reach + 1.5 || facing(o, u) < 0.3) continue;
+    if (d2(u.pos, o.pos) > reach + 1.5 || facing(o, u) < 0.3 || blockedBetween(u.pos, o.pos)) continue;
     if (Math.random() < o.blockChance) {
       const others = Object.keys(DIRS).filter(d => d !== u.atk.dir);
       o.block = { dir: Math.random() < o.blockSkill ? u.atk.dir : pick(others), t: windup + 0.6 };
@@ -384,6 +413,7 @@ function resolveHit(u) {
     if (!alive(o) || !canHit(u, o)) continue;
     if (d2(u.pos, o.pos) > w.reach + 0.3 || facing(u, o) < 0.35) continue;
     if (!isPlayerSide(u) && !hostile(u, o)) continue;
+    if (blockedBetween(u.pos, o.pos)) continue;
     if (u.cmd && u.cmd.type === 'attack' && u.cmd.target !== o && !hostile(u, o)) continue;
     damage(o, u, damageOf(u) * rand(0.85, 1.15), u.atk.dir, false);
     if (++hits >= (u.isPlayer ? 2 : 1)) break;
@@ -559,7 +589,14 @@ function updateArrows(dt) {
     if (a.life <= 0) { scene.remove(a.m); arrows.splice(i, 1); continue; }
     if (a.stuck) continue;
     a.vel.y -= GRAV * dt;
+    const prev = { x: a.pos.x, z: a.pos.z };
     a.pos.addScaledVector(a.vel, dt);
+    const ground = heightAt(a.pos.x, a.pos.z);
+    if (wallBetween(prev, a.pos) || (a.pos.y < ground + 4.6 && ringBetween(prev, a.pos))) {
+      a.pos.x = prev.x; a.pos.z = prev.z;
+      a.stuck = true; a.life = Math.min(a.life, 6);
+      continue;
+    }
     a.m.lookAt(_v.copy(a.pos).add(a.vel));
     let hit = false;
     for (const o of units) {
@@ -589,12 +626,117 @@ function aimVelocity(from, to, speed) {
 }
 
 // ---------- Déplacements ----------
+// point de passage : porte de la ville, porte d'un bâtiment, ou coin pour contourner
+function localOf(b, p) {
+  const dx = p.x - b.c.x, dz = p.z - b.c.z, c = Math.cos(b.yaw), sn = Math.sin(b.yaw);
+  return { x: dx * c - dz * sn, z: dx * sn + dz * c };
+}
+function routeVia(u, t) {
+  const g = ringRoute(u.pos, t);
+  return buildingRoute(u.pos, g || t) || g;
+}
+function ringRoute(p, t) {
+  for (const s of state.settlements) {
+    if (!hasRing(s) || Math.abs(p.x - s.x) > s.r + 80 || Math.abs(p.z - s.z) > s.r + 80) continue;
+    if (!ringBetween(p, t)) continue;
+    const dp = Math.hypot(p.x - s.x, p.z - s.z), dt = Math.hypot(t.x - s.x, t.z - s.z);
+    const gin = gatePos(s, 3.5), gout = gatePos(s, -4);
+    // dedans : rejoindre la porte puis sortir
+    if (dp < s.r) return d2(p, gin) < 2.5 ? gout : gin;
+    if (dt < s.r && d2(p, gout) < 2.5) return gin;
+    // dehors : longer le mur vers la porte (pour entrer) ou vers la cible (pour passer de l'autre côté)
+    const ap = Math.atan2(p.z - s.z, p.x - s.x);
+    const aim = dt < s.r ? s.gate : Math.atan2(t.z - s.z, t.x - s.x);
+    const diff = angleDiff(ap, aim);
+    if (Math.abs(diff) > 0.4 || dt >= s.r) {
+      const a = ap + Math.sign(diff) * Math.min(0.4, Math.abs(diff)), r = Math.max(dp, s.r + 4.5);
+      return { x: s.x + Math.cos(a) * r, z: s.z + Math.sin(a) * r };
+    }
+    return gout;
+  }
+  return null;
+}
+// ligne « épaisse » : le passage doit laisser la place au corps
+function fatWall(a, b, w = 0.55) {
+  if (wallBetween(a, b)) return true;
+  const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz) || 1;
+  const ox = -dz / d * w, oz = dx / d * w;
+  return wallBetween({ x: a.x + ox, z: a.z + oz }, { x: b.x + ox, z: b.z + oz }) || wallBetween({ x: a.x - ox, z: a.z - oz }, { x: b.x - ox, z: b.z - oz });
+}
+function buildingRoute(p, t) {
+  const s = settlementAt(p, 3) || settlementAt(t, 3);
+  if (!s || !s.buildings || !fatWall(p, t)) return null;
+  const bu = s.buildings.find(b => d2(b.c, p) < 14 && insideBuilding(b, p));
+  const bt = s.buildings.find(b => d2(b.c, t) < 14 && insideBuilding(b, t));
+  if (bu && bu !== bt) { // sortir : s'aligner sur la porte puis passer
+    const l = localOf(bu, p);
+    return Math.abs(l.x) < 0.6 ? bu.W(0, bu.hd + 1.6) : bu.W(0, Math.min(l.z, bu.hd - 0.9));
+  }
+  const b = bt || s.buildings.find(b => d2(b.c, p) < 16 && insideBuilding({ ...b, hw: b.hw + 1.4, hd: b.hd + 1.4 }, p));
+  if (!b) return null;
+  const l = localOf(b, p);
+  if (bt && l.z > b.hd && Math.abs(l.x) < 0.7) return b.W(0, b.hd - 1); // devant la porte : entrer
+  // contourner par les coins jusqu'à la porte (entrer) ou jusqu'à la cible
+  const ex = b.hw + 1.6, ez = b.hd + 1.6;
+  const goal = bt ? b.W(0, b.hd + 1.6) : t;
+  if (!fatWall(p, goal)) return goal;
+  // collé au mur : d'abord s'en écarter pour longer le bâtiment sans frotter
+  if (Math.abs(l.x) < ex - 0.3 && Math.abs(l.z) < ez - 0.3) {
+    const gaps = [[ex - Math.abs(l.x), Math.sign(l.x) * ex, l.z], [ez - Math.abs(l.z), l.x, Math.sign(l.z) * ez]];
+    const [, x, z] = gaps[0][0] < gaps[1][0] ? gaps[0] : gaps[1];
+    return b.W(x, z);
+  }
+  const cands = [[-ex, -ez], [ex, -ez], [-ex, ez], [ex, ez]].map(([x, z]) => b.W(x, z));
+  let best = null, bc = Infinity;
+  for (const c of cands) {
+    if (d2(p, c) < 1.5 || fatWall(p, c)) continue;
+    const cost = d2(p, c) + d2(c, goal);
+    if (cost < bc) { bc = cost; best = c; }
+  }
+  return best;
+}
 function steer(u, tx, tz, dt, speedMul = 1, stop = 0.3) {
+  let via = false;
+  if (!u.isPlayer) {
+    // coincé contre un obstacle : petit détour sur le côté
+    if (u.lastSteer && u.moving > 0) {
+      const moved = Math.hypot(u.pos.x - u.lastSteer.x, u.pos.z - u.lastSteer.z);
+      u.stuckT = moved < (u.lastStepLen || 0) * 0.3 ? (u.stuckT || 0) + dt : Math.max(0, (u.stuckT || 0) - dt);
+    }
+    u.lastSteer = { x: u.pos.x, z: u.pos.z };
+    // aucun progrès vers la cible depuis 2 s : on tente un détour
+    const dGoal = Math.hypot(tx - u.pos.x, tz - u.pos.z);
+    const pr = u.prog;
+    if (!pr || Math.hypot(pr.tx - tx, pr.tz - tz) > 3) u.prog = { tx, tz, best: dGoal, t: 0 };
+    else if (dGoal < pr.best - 0.5) { pr.best = dGoal; pr.t = 0; }
+    else if (dGoal > stop + 0.5 && (pr.t += dt) > 2) { pr.t = 0; pr.best = dGoal; u.stuckT = 1; u.wp = null; }
+    if (u.stuckT > 0.5 && !(u.detour && u.detour.t > 0)) {
+      const a = Math.atan2(tx - u.pos.x, tz - u.pos.z) + (u.detourSide = -(u.detourSide || 1)) * rand(1.2, 1.9);
+      const len = rand(3, 6);
+      u.detour = { x: u.pos.x + Math.sin(a) * len, z: u.pos.z + Math.cos(a) * len, t: 1.5 };
+      u.stuckT = 0;
+    }
+    if (u.detour && u.detour.t > 0) {
+      u.detour.t -= dt;
+      if (d2(u.pos, u.detour) > 0.4) { tx = u.detour.x; tz = u.detour.z; stop = 0.2; via = true; }
+      else u.detour.t = 0;
+    } else if (!u.animal) {
+      // on garde le point de passage choisi jusqu'à l'atteindre (évite d'hésiter entre deux chemins)
+      let w = u.wp;
+      if (w && (w.t <= 0 || d2(w, u.pos) < 0.45 || Math.hypot(w.tx - tx, w.tz - tz) > 3)) w = u.wp = null;
+      if (!w) {
+        const r = routeVia(u, { x: tx, z: tz });
+        if (r) w = u.wp = { x: r.x, z: r.z, t: 3, tx, tz };
+      }
+      if (w) { w.t -= dt; tx = w.x; tz = w.z; stop = 0.2; via = true; }
+    }
+  }
   const dx = tx - u.pos.x, dz = tz - u.pos.z;
   const d = Math.hypot(dx, dz);
-  if (d <= stop) { u.moving = 0; return true; }
+  if (d <= stop) { u.moving = 0; return !via; }
   u.yaw = turnToward(u.yaw, Math.atan2(dx, dz), dt * 8);
   const step = Math.min(d - stop + 0.01, speedOf(u) * speedMul * dt);
+  u.lastStepLen = step;
   const nx = u.pos.x + dx / d * step, nz = u.pos.z + dz / d * step;
   const f = F(u.faction);
   // bêtes et bandits restent hors des villes, sauf les bandits en raid ou chez eux

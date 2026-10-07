@@ -4,7 +4,7 @@
 const $ = id => document.getElementById(id);
 
 // ---------- Réglages ----------
-const settings = { sens: 1, invertY: false, directional: false, smooth: true, camMode: 'suivie' };
+const settings = { sens: 1, invertY: false, directional: false, smooth: true, camMode: 'suivie', hitNeutrals: false };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (err) { /* réglages par défaut */ }
 function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (err) { /* ignoré */ } }
 
@@ -900,6 +900,7 @@ function renderSettings() {
       <label class="row">Sensibilité de la souris <input id="sSens" type="range" min="0.2" max="2.5" step="0.05" value="${settings.sens}"> <b id="sSensV">${settings.sens.toFixed(2)}</b></label>
       <label class="row"><input id="sInv" type="checkbox" ${settings.invertY ? 'checked' : ''}> Inverser l'axe vertical</label>
       <label class="row"><input id="sSmooth" type="checkbox" ${settings.smooth ? 'checked' : ''}> Caméra lissée</label>
+      <label class="row"><input id="sHit" type="checkbox" ${settings.hitNeutrals ? 'checked' : ''}> Frapper les neutres et alliés (sinon tes coups et flèches ne touchent que tes ennemis)</label>
       <label class="row"><input id="sTank" type="checkbox" ${settings.tank !== false ? 'checked' : ''}> Vue suivie : Q et D font tourner le personnage, la caméra reste derrière lui (conseillé sur Mac)</label>
       <label class="row">Caméra (touche V pour changer)
         <select id="sCam">
@@ -917,6 +918,7 @@ $('settings').addEventListener('input', e => {
   if (e.target.id === 'sDir') settings.directional = e.target.checked;
   if (e.target.id === 'sSmooth') settings.smooth = e.target.checked;
   if (e.target.id === 'sTank') settings.tank = e.target.checked;
+  if (e.target.id === 'sHit') settings.hitNeutrals = e.target.checked;
   if (e.target.id === 'sCam') setCamMode(e.target.value);
   saveSettings();
 });
