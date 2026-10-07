@@ -11,22 +11,20 @@
 
   <!-- Création du personnage -->
   <div id="creation" class="panel">
-    <h2>Créer ton personnage</h2>
+    <h1 class="logo">Terres Arides</h1>
+    <button id="cContinue" class="big alt hidden"></button>
+    <h2>Nouveau personnage</h2>
     <label>Nom <input id="cName" maxlength="16" value="Vagabond"></label>
-
     <div class="label">Origine</div>
     <div id="cOrigins" class="choices"></div>
-
     <div class="label">Tenue</div>
     <div id="cBody" class="swatches"></div>
     <div class="label">Peau</div>
     <div id="cSkin" class="swatches"></div>
     <div class="label">Taille</div>
     <input id="cHeight" type="range" min="0.9" max="1.1" step="0.01" value="1">
-
     <div class="label">Caractéristiques <span id="cPoints"></span></div>
     <div id="cStats"></div>
-
     <button id="cStart" class="big">Commencer</button>
   </div>
 
@@ -35,33 +33,56 @@
     <div id="topbar">
       <span>💰 <b id="money">0</b></span>
       <span>🍖 <b id="food">0</b></span>
-      <span>📦 <b id="cargo">0/0</b></span>
+      <span>🏹 <b id="arrowsCount">0</b></span>
+      <span>🎒 <b id="cargo">0/0</b> kg</span>
       <span>☀️ Jour <b id="day">1</b></span>
+      <span id="speed"></span>
+      <span id="allegiance"></span>
       <span id="orderLabel"></span>
+      <span class="tbtns">
+        <button id="invBtn">Inventaire (I)</button>
+        <button id="mapBtn">Carte (M)</button>
+        <button id="saveBtn">💾</button>
+      </span>
     </div>
     <div id="player" class="panel">
       <b id="pName"></b> <small id="pLevel"></small>
       <div class="bar big"><div id="pHp"></div></div>
       <small id="pHpText"></small>
+      <div id="pWeapon"></div>
       <div id="squadList"></div>
     </div>
     <div id="prompt" class="hidden"></div>
     <div id="log"></div>
     <canvas id="minimap" width="180" height="180"></canvas>
     <div id="controls" class="panel">
-      <b>Clic</b> : capturer la souris / frapper · <b>Clic droit</b> : parer<br>
-      <b>ZQSD/WASD</b> : bouger · <b>Maj</b> : courir · <b>Molette</b> : zoom<br>
-      <b>E</b> : ville · <b>1</b> suivez-moi · <b>2</b> chargez · <b>3</b> tenez la position<br>
-      <b>Échap</b> : libérer la souris
+      <b>ZQSD</b> bouger · <b>Maj</b> courir · <b>Souris</b> caméra et direction du coup<br>
+      <b>Clic</b> frapper · <b>Clic droit</b> parer (bouge la souris du côté de l'attaque)<br>
+      <b>X</b> arc / mêlée · <b>E</b> ville · <b>F</b> fouiller · <b>I</b> inventaire · <b>M</b> carte<br>
+      <b>1 2 3</b> ordres · <b>T</b> temps accéléré · <b>Échap</b> libérer la souris
     </div>
-    <div id="crosshair">+</div>
+    <div id="dirInd"><span class="d-haut">▲</span><span class="d-gauche">◀</span><span class="d-droite">▶</span><span class="d-estoc">▼</span><i>+</i></div>
+    <div id="threat"></div>
   </div>
 
-  <div id="town" class="panel hidden"></div>
+  <div id="town" class="panel big-panel hidden"></div>
+  <div id="inventory" class="panel big-panel hidden"></div>
+  <div id="loot" class="panel big-panel hidden"></div>
+  <div id="worldmap" class="hidden"></div>
+  <div id="intro" class="panel big-panel hidden">
+    <h2>Les Terres Arides</h2>
+    <div id="introText"></div>
+    <button id="introGo" class="big">Commencer l'aventure</button>
+  </div>
   <div id="ko" class="hidden"><h1>K.O.</h1><p id="koText"></p></div>
   <div id="floats"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="game.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/units.js"></script>
+  <script src="js/strategy.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
 </body>
 </html>

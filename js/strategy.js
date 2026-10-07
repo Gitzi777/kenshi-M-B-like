@@ -1,0 +1,498 @@
+// Terres Arides — monde vivant : factions, relations, groupes en mouvement, événements.
+'use strict';
+
+// ---------- Factions ----------
+function initFactions() {
+  for (const def of FACTION_DEFS) {
+    state.factions[def.id] = JSON.parse(JSON.stringify({ ...def, alive: true, founded: 0 }));
+    state.rep[def.id] = def.bandit ? -100 : 0;
+  }
+  const ids = FACTION_DEFS.filter(f => !f.bandit).map(f => f.id);
+  for (const a of ids) for (const b of ids) if (a < b) state.relations[relKey(a, b)] = 'peace';
+  for (const [a, b] of START_WARS) { state.relations[relKey(a, b)] = 'war'; state.warSince[relKey(a, b)] = 0; }
+}
+
+const aliveFactions = () => Object.values(state.factions).filter(f => f.alive);
+const majorFactions = () => aliveFactions().filter(f => !f.bandit);
+const settlementsOf = fid => state.settlements.filter(s => s.faction === fid);
+const partiesOf = fid => state.parties.filter(p => p.faction === fid);
+const atWar = (a, b) => state.relations[relKey(a, b)] === 'war';
+function enemiesOf(fid) { return majorFactions().filter(f => f.id !== fid && atWar(fid, f.id)); }
+
+function setRelation(a, b, rel) {
+  const k = relKey(a, b);
+  state.relations[k] = rel;
+  if (rel === 'war') state.warSince[k] = state.clock || 0;
+}
+
+// ---------- Chroniques ----------
+function addChronicle(text, icon = '📜') {
+  state.chronicle.push({ day: state.day, text, icon });
+  if (state.chronicle.length > 120) state.chronicle.shift();
+  if (state.mode === 'play') logMsg(`${icon} ${text}`, 'news');
+}
+
+// ---------- Groupes (patrouilles, armées, caravanes, bandes) ----------
+const partyPower = p => partyTroops(p).reduce((a, t) => a + (TROOP_POWER[t] || 1), 0);
+function partyTroops(p) { return p.mat ? p.units.filter(u => !u.dead).map(u => u.troop) : p.troops; }
+const PARTY_LABEL = { patrol: 'Patrouille', army: 'Armée', caravan: 'Caravane', bandits: 'Bande' };
+const partyName = p => `${PARTY_LABEL[p.kind]} ${F(p.faction).of}`;
+
+function rollTroops(fid, n, kind) {
+  const f = F(fid);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    if (f.bandit) out.push(i === 0 && n >= 4 ? 'chef' : (Math.random() < 0.25 ? 'archer' : 'pillard'));
+    else {
+      const r = Math.random();
+      const vet = kind === 'army' ? 0.35 : kind === 'caravan' ? 0.1 : 0.2;
+      out.push(r < vet ? 'veteran' : r < vet + 0.28 ? 'archer' : 'recrue');
+    }
+  }
+  return out;
+}
+
+function makeParty(fid, kind, x, z, troops, extra = {}) {
+  const p = {
+    id: uid(), faction: fid, kind, x, z, troops,
+    dest: extra.dest || { x, z }, home: extra.home || null, target: extra.target || null,
+    timer: 0, mat: false, units: [], aggro: false,
+  };
+  p.name = partyName(p);
+  state.parties.push(p);
+  return p;
+}
+
+function removeParty(p) {
+  if (p.mat) for (const u of p.units) if (!u.dead) removeUnit(u);
+  p.units = [];
+  const i = state.parties.indexOf(p);
+  if (i >= 0) state.parties.splice(i, 1);
+}
+
+const placeName = p => {
+  const s = nearestSettlement(p);
+  return s && d2(s, p) < 120 ? `près ${deN(s.name)}` : 'dans les dunes';
+};
+
+function materialize(p) {
+  p.mat = true;
+  p.units = p.troops.map((troop, i) => {
+    const a = i * 2.4, r = i ? 1.5 + i * 0.5 : 0;
+    return makeTroop(p.faction, troop, p.x + Math.cos(a) * r, p.z + Math.sin(a) * r, { party: p, banner: i === 0 && p.kind !== 'bandits' });
+  });
+}
+function dematerialize(p) {
+  p.troops = p.units.filter(u => !u.dead).map(u => u.troop);
+  for (const u of p.units) if (!u.dead) removeUnit(u); else u.party = null;
+  p.units = [];
+  p.mat = false;
+  p.aggro = false;
+}
+
+function randomWildPoint(minFromTown = 60, minFromPlayer = 150) {
+  let x, z, tries = 0;
+  do {
+    x = rand(-HALF + 30, HALF - 30); z = rand(-HALF + 30, HALF - 30);
+  } while (++tries < 80 && (nearSettlement(x, z, minFromTown) || (player && Math.hypot(x - player.pos.x, z - player.pos.z) < minFromPlayer)));
+  return { x, z };
+}
+
+function spawnPatrol(fid) {
+  const own = settlementsOf(fid);
+  if (!own.length) return null;
+  const s = pick(own);
+  const g = gatePos(s, -10);
+  return makeParty(fid, 'patrol', g.x, g.z, rollTroops(fid, randInt(3, 6), 'patrol'), { home: s.name });
+}
+function spawnCaravan(fid) {
+  const own = settlementsOf(fid);
+  if (!own.length) return null;
+  const from = pick(own);
+  const dests = state.settlements.filter(s => s !== from && !hostileF(fid, s.faction));
+  if (!dests.length) return null;
+  const to = pick(dests);
+  const g = gatePos(from, -10);
+  return makeParty(fid, 'caravan', g.x, g.z, rollTroops(fid, randInt(2, 4), 'caravan'), { target: to.name, dest: gatePos(to, -8) });
+}
+function spawnBandits(near) {
+  const pt = near || randomWildPoint();
+  const n = clamp(randInt(2, 3) + Math.floor(state.day / 2), 2, 7);
+  return makeParty('bandits', 'bandits', pt.x, pt.z, rollTroops('bandits', n, 'bandits'));
+}
+function raiseArmy(fid) {
+  const enemies = enemiesOf(fid);
+  const targets = state.settlements.filter(s => enemies.some(e => e.id === s.faction));
+  const own = settlementsOf(fid);
+  if (!targets.length || !own.length) return null;
+  let best = null, bd = Infinity, from = null;
+  for (const o of own) for (const t of targets) { const d = d2(o, t); if (d < bd) { bd = d; best = t; from = o; } }
+  const g = gatePos(from, -12);
+  const p = makeParty(fid, 'army', g.x, g.z, rollTroops(fid, randInt(7, 11), 'army'), { target: best.name, home: from.name });
+  p.dest = { x: best.x, z: best.z };
+  addChronicle(`${theF(F(fid), true)} ${vb(F(fid), 'lève', 'lèvent')} une armée à ${from.name} et ${vb(F(fid), 'marche', 'marchent')} sur ${best.name}.`, '📯');
+  return p;
+}
+
+// ---------- Batailles hors de vue ----------
+function autoBattle(a, b) {
+  const pa = partyPower(a) * rand(0.75, 1.25), pb = partyPower(b) * rand(0.75, 1.25);
+  const [win, lose, pw, pl] = pa >= pb ? [a, b, pa, pb] : [b, a, pb, pa];
+  const losses = Math.round(win.troops.length * clamp(pl / pw, 0.1, 0.9) * 0.6);
+  win.troops.splice(0, losses);
+  const where = placeName(lose);
+  if (lose.kind === 'caravan' && F(win.faction).bandit) addChronicle(`${theF(F(win.faction), true)} ${vb(F(win.faction), 'a', 'ont')} pillé une caravane ${F(lose.faction).of} ${where}.`, '🐺');
+  else if (lose.kind === 'army' || win.kind === 'army') addChronicle(`Bataille ${where} : ${theF(F(win.faction))} ${vb(F(win.faction), 'écrase', 'écrasent')} l'${lose.kind === 'army' ? 'armée' : 'escorte'} ${F(lose.faction).of}.`, '⚔');
+  removeParty(lose);
+  if (!win.troops.length) removeParty(win);
+}
+
+function siege(p, s) {
+  const old = s.faction;
+  const atk = partyPower(p) * rand(0.8, 1.25);
+  const def = (s.garrison * 1.3 + 2) * (s.capital ? 1.3 : 1) * rand(0.8, 1.2);
+  if (atk > def) {
+    const survivors = Math.max(2, Math.round(partyTroops(p).length * 0.6));
+    removeParty(p);
+    captureSettlement(s, p.faction, survivors);
+  } else {
+    s.garrison = Math.max(1, Math.round(s.garrison - atk / 1.5));
+    removeParty(p);
+    addChronicle(`${s.name} a repoussé l'assaut ${F(p.faction).of}. Les murs tiennent.`, '🛡');
+  }
+  return old;
+}
+
+function captureSettlement(s, fid, garrison) {
+  const old = s.faction;
+  despawnGuards(s);
+  setOwner(s, fid);
+  s.garrison = garrison;
+  s.capital = false;
+  addChronicle(`${s.name} est tombée ! ${theF(F(fid), true)} ${vb(F(fid), "s'empare", "s'emparent")} de la ville ${F(old).of}.`, '🔥');
+  if (state.allegiance === old && player) logMsg(`Ta faction a perdu ${s.name}.`, 'warn');
+}
+
+// ---------- Garnisons (gardes visibles quand tu es proche) ----------
+function spawnGuards(s) {
+  s.guardsMat = true;
+  s.guards = [];
+  s.reinforce = 0;
+  const n = Math.min(s.garrison, 6);
+  for (let i = 0; i < n; i++) addGuard(s, i);
+}
+function addGuard(s, i) {
+  const fac = F(s.faction);
+  const spots = [
+    [s.gate - 0.12, s.r - 3], [s.gate + 0.12, s.r - 3], [s.gate, s.r - 9],
+    [s.gate + Math.PI, 8], [s.gate + Math.PI / 2, s.r - 6], [s.gate - Math.PI / 2, s.r - 6],
+  ];
+  const [a, r] = spots[i % spots.length];
+  const x = s.x + Math.cos(a) * r, z = s.z + Math.sin(a) * r;
+  const troop = fac.bandit ? 'pillard' : (i === 2 || i === 3 ? 'archer' : 'veteran');
+  const u = makeTroop(s.faction, troop, x, z, { guardOf: s, name: `Garde ${fac.of}` });
+  u.home = { x, z, yaw: Math.atan2(Math.cos(s.gate), Math.sin(s.gate)) };
+  s.guards.push(u);
+}
+function despawnGuards(s) {
+  for (const u of s.guards || []) if (!u.dead) removeUnit(u);
+  s.guards = [];
+  s.guardsMat = false;
+}
+function updateGarrisons(dt) {
+  for (const s of state.settlements) {
+    const near = player && d2(s, player.pos) < 210;
+    if (near && !s.guardsMat) spawnGuards(s);
+    else if (!near && s.guardsMat) despawnGuards(s);
+    if (!s.guardsMat) continue;
+    const living = s.guards.filter(u => !u.dead);
+    if (living.length < Math.min(s.garrison, 6)) {
+      s.reinforce = (s.reinforce || 0) + dt;
+      if (s.reinforce > 15) { s.reinforce = 0; addGuard(s, s.guards.length); logMsg(`Des renforts sortent de ${s.name}.`); }
+    }
+    // assaut en direct : une armée ennemie dans les murs et plus de garnison
+    if (s.garrison <= 0) {
+      const army = state.parties.find(p => p.mat && p.kind === 'army' && hostileF(p.faction, s.faction) &&
+        p.units.some(u => alive(u) && d2(u.pos, s) < s.r));
+      if (army) {
+        const survivors = army.units.filter(alive).length;
+        removeParty(army);
+        captureSettlement(s, army.faction, Math.max(2, survivors));
+      }
+    }
+  }
+}
+
+// ---------- Mise à jour des groupes ----------
+function partyThink(p) {
+  const f = F(p.faction);
+  const power = partyPower(p);
+  if (p.kind === 'army') {
+    const t = state.settlements.find(s => s.name === p.target);
+    if (!t || !hostileF(p.faction, t.faction)) {
+      p.kind = 'patrol'; p.name = partyName(p);
+      const h = nearestSettlement(p, s => s.faction === p.faction);
+      p.home = h ? h.name : null;
+    } else p.dest = { x: t.x, z: t.z };
+    return;
+  }
+  if (p.kind === 'caravan') return;
+  // chasse un groupe ennemi plus faible à proximité
+  let prey = null, bd = p.kind === 'bandits' ? 70 : 90;
+  for (const q of state.parties) {
+    if (q === p || !hostileF(p.faction, q.faction)) continue;
+    const d = d2(p, q);
+    if (d < bd && partyPower(q) < power * (p.kind === 'bandits' ? 0.9 : 1.2)) { bd = d; prey = q; }
+  }
+  if (prey) { p.dest = { x: prey.x, z: prey.z }; return; }
+  // ou rôde
+  const home = state.settlements.find(s => s.name === p.home);
+  const cx = home && p.kind === 'patrol' ? home.x : p.x, cz = home && p.kind === 'patrol' ? home.z : p.z;
+  const radius = p.kind === 'patrol' ? 150 : 90;
+  for (let i = 0; i < 20; i++) {
+    const nx = clamp(cx + rand(-radius, radius), -HALF + 20, HALF - 20), nz = clamp(cz + rand(-radius, radius), -HALF + 20, HALF - 20);
+    if (!nearSettlement(nx, nz, f.bandit ? 50 : 15)) { p.dest = { x: nx, z: nz }; break; }
+  }
+}
+
+function updateParties(dt) {
+  for (const p of [...state.parties]) {
+    if (!state.parties.includes(p)) continue;
+    const f = F(p.faction);
+    if (!f || !f.alive) { removeParty(p); continue; }
+    p.timer -= dt;
+    if (p.timer <= 0) { p.timer = rand(5, 10); partyThink(p); }
+    if (p.mat) {
+      const leader = p.units.find(alive);
+      if (!leader) {
+        if (p.kind === 'army') addChronicle(`L'armée ${f.of} a été anéantie ${placeName(p)}.`, '⚔');
+        removeParty(p);
+        continue;
+      }
+      p.x = leader.pos.x; p.z = leader.pos.z;
+      if (player && d2(p, player.pos) > DESPAWN_DIST) dematerialize(p);
+    } else {
+      const dx = p.dest.x - p.x, dz = p.dest.z - p.z, d = Math.hypot(dx, dz);
+      const speed = p.kind === 'army' ? 2.6 : 2.3;
+      if (d > 1) { const st = Math.min(d, speed * dt); p.x += dx / d * st; p.z += dz / d * st; }
+      if (player && state.mode === 'play' && d2(p, player.pos) < SPAWN_DIST) materialize(p);
+    }
+    if (!p.troops.length && !p.mat) { removeParty(p); continue; }
+    // arrivée
+    if (p.kind === 'caravan' && d2(p, p.dest) < 6 && !p.mat) { removeParty(p); continue; }
+    if (p.kind === 'army') {
+      const t = state.settlements.find(s => s.name === p.target);
+      if (t && d2(p, t) < t.r + 6 && (!p.mat || !t.guardsMat)) siege(p, t);
+    }
+  }
+  // batailles automatiques entre groupes hors de vue
+  const off = state.parties.filter(p => !p.mat);
+  for (let i = 0; i < off.length; i++) {
+    for (let j = i + 1; j < off.length; j++) {
+      const a = off[i], b = off[j];
+      if (!state.parties.includes(a) || !state.parties.includes(b)) continue;
+      if (d2(a, b) < 8 && hostileF(a.faction, b.faction)) autoBattle(a, b);
+    }
+  }
+}
+
+// ---------- Naissance des groupes ----------
+function spawnTick() {
+  if (state.parties.length > 45) return;
+  for (const f of majorFactions()) {
+    const own = settlementsOf(f.id);
+    const ps = partiesOf(f.id);
+    if (own.length && ps.filter(p => p.kind === 'patrol').length < own.length + 1 && Math.random() < 0.5) spawnPatrol(f.id);
+    if (own.length && ps.filter(p => p.kind === 'caravan').length < (f.id === 'ligue' ? 3 : 1) && Math.random() < 0.35) spawnCaravan(f.id);
+    if (enemiesOf(f.id).length && !ps.some(p => p.kind === 'army') && Math.random() < 0.12) raiseArmy(f.id);
+  }
+  if (partiesOf('bandits').length < 9) spawnBandits();
+}
+
+// ---------- Événements mondiaux ----------
+const WAR_REASONS = ["après le pillage d'une caravane", 'pour le contrôle des puits', "à la suite d'un assassinat",
+  'au nom du soleil', 'pour une dette jamais payée', 'après une insulte à son chef', 'pour des mines de fer'];
+
+function genFactionName() {
+  const used = new Set(Object.values(state.factions).map(f => f.name));
+  for (let i = 0; i < 30; i++) {
+    const pre = pick(Object.keys(NEW_FACTION_PREFIX)), suf = pick(NEW_FACTION_SUFFIX);
+    const name = `${pre} ${suf}`;
+    const art = { 'de la': 'la', "de l'": "l'", du: 'le' }[NEW_FACTION_PREFIX[pre]];
+    if (!used.has(name)) return { name, art, of: `${NEW_FACTION_PREFIX[pre]}${NEW_FACTION_PREFIX[pre].endsWith("'") ? '' : ' '}${name}` };
+  }
+  return { name: 'Compagnie Sans Nom', art: 'la', of: 'de la Compagnie Sans Nom' };
+}
+
+function createFaction(parent, extra) {
+  const { name, of, art } = genFactionName();
+  const usedMaps = new Set(aliveFactions().map(f => f.map));
+  const pal = FACTION_PALETTE.find(p => !usedMaps.has(p[3])) || pick(FACTION_PALETTE);
+  const leader = `${pick(LEADER_TITLE)} ${pick(LEADER_FIRST)}`;
+  const id = 'f' + uid();
+  const f = {
+    id, of, art, name, map: pal[3], colors: [pal[0], pal[1], pal[2]],
+    flag: { pattern: pick(FLAG_PATTERNS), emblem: pick(FLAG_EMBLEMS) },
+    leader, motto: pick(['« Notre heure est venue. »', '« Plus jamais à genoux. »', '« Le sable se souvient. »', '« Par le fer et la soif. »']),
+    lore: extra.lore(leader, name),
+    outfit: { body: pal[0], pants: '#2d2419', tabard: true },
+    troops: JSON.parse(JSON.stringify(GENERIC_TROOPS)),
+    shop: parent ? [...parent.shop] : ['machette', 'sabre', 'lance', 'arc_court', 'tunique', 'cuir', 'capuche', 'casque_cuir'],
+    alive: true, founded: state.day, parent: parent ? parent.id : null,
+  };
+  state.factions[id] = f;
+  state.rep[id] = parent ? (state.rep[parent.id] || 0) : 0;
+  for (const o of majorFactions()) {
+    if (o.id === id) continue;
+    const rel = parent && o.id !== parent.id ? (state.relations[relKey(parent.id, o.id)] || 'peace') : 'peace';
+    setRelation(id, o.id, rel);
+  }
+  if (parent) setRelation(id, parent.id, 'war');
+  return f;
+}
+
+function eventSplit() {
+  if (majorFactions().length >= 9) return false;
+  const candidates = majorFactions().filter(f => settlementsOf(f.id).length >= 2);
+  if (!candidates.length) return false;
+  const parent = pick(candidates);
+  const towns = settlementsOf(parent.id).filter(s => !s.capital);
+  const s = pick(towns.length ? towns : settlementsOf(parent.id).slice(1));
+  if (!s) return false;
+  const f = createFaction(parent, {
+    lore: (leader, name) => `Née au jour ${state.day}, quand ${leader}, gouverneur de ${s.name}, s'est soulevé contre ${parent.of}. ` +
+      `${name} réclame l'indépendance et refuse de payer tribut à ${parent.leader}.`,
+  });
+  despawnGuards(s);
+  setOwner(s, f.id);
+  s.capital = true;
+  addChronicle(`Scission ! ${s.name} se soulève contre ${parent.of} : ${f.leader} fonde ${theF(f)}.`, '🔥');
+  spawnPatrol(f.id);
+  return true;
+}
+
+function eventNewFaction() {
+  if (majorFactions().length >= 8) return false;
+  const used = new Set(state.settlements.map(s => s.name));
+  const placeName = NEW_PLACE_NAMES.find(n => !used.has(n));
+  if (!placeName) return false;
+  let spot = null;
+  for (let i = 0; i < 60 && !spot; i++) {
+    const x = rand(-HALF + 60, HALF - 60), z = rand(-HALF + 60, HALF - 60);
+    if (!state.settlements.some(s => Math.hypot(x - s.x, z - s.z) < 160) && !RUINS.some(r => Math.hypot(x - r.x, z - r.z) < 60) &&
+      !(player && Math.hypot(x - player.pos.x, z - player.pos.z) < 80)) spot = { x, z };
+  }
+  if (!spot) return false;
+  const f = createFaction(null, {
+    lore: (leader, name) => `${leader}, ancien lieutenant des Chiens des Dunes, a rassemblé des déserteurs et des esclaves libérés. ` +
+      `Au jour ${state.day}, il a planté sa bannière à ${placeName} et proclamé ${name}.`,
+  });
+  const goods = ['food', 'cloth', 'iron', 'spices'];
+  const prod = pick(goods);
+  makeSettlement({ name: placeName, x: spot.x, z: spot.z, faction: f.id, type: 'camp', produces: prod,
+    demands: pick(goods.filter(g => g !== prod)), capital: true, garrison: 5 }, true);
+  const near = nearestSettlement(spot, s => s.faction !== f.id && !F(s.faction).bandit);
+  if (near) setRelation(f.id, near.faction, 'war');
+  addChronicle(`${f.leader} fonde ${placeName} et proclame ${theF(f)}.` + (near ? ` La guerre éclate avec ${theF(F(near.faction))}.` : ''), '🏴');
+  spawnPatrol(f.id); spawnPatrol(f.id);
+  return true;
+}
+
+function eventWar() {
+  const pairs = [];
+  const fs = majorFactions();
+  for (const a of fs) for (const b of fs) if (a.id < b.id && !atWar(a.id, b.id)) pairs.push([a, b]);
+  if (!pairs.length) return false;
+  const [a, b] = pick(pairs);
+  setRelation(a.id, b.id, 'war');
+  addChronicle(`${theF(a, true)} ${vb(a, 'déclare', 'déclarent')} la guerre ${toF(b)} ${pick(WAR_REASONS)} !`, '⚔');
+  return true;
+}
+
+function eventPeace() {
+  const pairs = [];
+  const fs = majorFactions();
+  for (const a of fs) for (const b of fs) {
+    if (a.id < b.id && atWar(a.id, b.id) && (state.clock || 0) - (state.warSince[relKey(a.id, b.id)] || 0) > 150) pairs.push([a, b]);
+  }
+  if (!pairs.length) return false;
+  const [a, b] = pick(pairs);
+  setRelation(a.id, b.id, 'peace');
+  addChronicle(`${theF(a, true)} et ${theF(b)} signent la paix. Pour combien de temps ?`, '🕊');
+  return true;
+}
+
+function eventEconomy() {
+  const s = pick(state.settlements);
+  if (Math.random() < 0.5) {
+    s.fluct.food = 1.8;
+    addChronicle(`Sécheresse à ${s.name} : le prix de la nourriture s'envole.`, '☀');
+  } else {
+    const g = pick(['spices', 'cloth', 'iron']);
+    s.fluct[g] = 0.55;
+    addChronicle(`Une grande caravane arrive à ${s.name} : ${GOODS[g].name.toLowerCase()} à prix cassé.`, '🐪');
+  }
+  return true;
+}
+
+function eventRaid() {
+  const s = pick(state.settlements);
+  const a = rand(0, Math.PI * 2);
+  const pt = { x: clamp(s.x + Math.cos(a) * 110, -HALF + 20, HALF - 20), z: clamp(s.z + Math.sin(a) * 110, -HALF + 20, HALF - 20) };
+  const p = makeParty('bandits', 'bandits', pt.x, pt.z, rollTroops('bandits', randInt(6, 9), 'bandits'));
+  p.dest = { x: pt.x, z: pt.z };
+  addChronicle(`${F('bandits').leader} lance une grande razzia près ${deN(s.name)}. Voyageurs, méfiez-vous.`, '🐺');
+  return true;
+}
+
+function checkExtinctions() {
+  for (const f of majorFactions()) {
+    if (!settlementsOf(f.id).length && !partiesOf(f.id).length) {
+      f.alive = false;
+      f.died = state.day;
+      addChronicle(`${theF(f, true)} ${vb(f, 'a', 'ont')} disparu des Terres Arides.`, '💀');
+      if (state.allegiance === f.id) { state.allegiance = null; refreshPlayerDress(); }
+    }
+  }
+}
+
+function worldEvent() {
+  checkExtinctions();
+  const r = Math.random();
+  let ok = false;
+  if (r < 0.22) ok = eventWar();
+  else if (r < 0.40) ok = eventPeace();
+  else if (r < 0.54) ok = eventSplit();
+  else if (r < 0.66) ok = eventNewFaction();
+  else if (r < 0.83) ok = eventEconomy();
+  else ok = eventRaid();
+  if (!ok) eventEconomy();
+}
+
+function updateWorld(dt) {
+  state.clock = (state.clock || 0) + dt;
+  updateParties(dt);
+  updateGarrisons(dt);
+  state.spawnTimer -= dt;
+  if (state.spawnTimer <= 0) { state.spawnTimer = 8; spawnTick(); }
+  state.eventTimer -= dt;
+  if (state.eventTimer <= 0) { state.eventTimer = rand(55, 95); worldEvent(); }
+  state.garrisonTimer -= dt;
+  if (state.garrisonTimer <= 0) {
+    state.garrisonTimer = 60;
+    for (const s of state.settlements) s.garrison = Math.min(s.type === 'camp' ? 6 : 10, s.garrison + 1);
+  }
+  state.priceTimer -= dt;
+  if (state.priceTimer <= 0) {
+    state.priceTimer = 20;
+    for (const s of state.settlements) for (const g in s.fluct) s.fluct[g] = clamp(s.fluct[g] + rand(-0.1, 0.1) + (1 - s.fluct[g]) * 0.1, 0.5, 1.9);
+  }
+}
+
+// premier peuplement du monde
+function populateWorld() {
+  for (const f of majorFactions()) { spawnPatrol(f.id); spawnPatrol(f.id); spawnCaravan(f.id); }
+  for (let i = 0; i < 7; i++) spawnBandits();
+  addChronicle("Les Clans de Fer et le Concile d'Ashara sont en guerre depuis l'incendie des forges sacrées.", '⚔');
+  addChronicle("Le Concile mène une croisade contre les Nomades du Vent, qu'il accuse d'adorer la lune.", '⚔');
+}
