@@ -176,3 +176,9 @@ label.row input[type=range] { flex: 1; }
 #view canvas { cursor: default; }
 #ko button.big { width: auto; padding: 10px 24px; }
 select { background: #2a2117; color: #fff; border: 1px solid #6b5536; border-radius: 4px; padding: 4px; max-width: 100%; }
+
+.skillgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 4px 10px; margin: 6px 0; }
+.skillgrid .sk { position: relative; display: flex; justify-content: space-between; font-size: 12px; padding: 2px 4px 4px; }
+.skillgrid .sk i { position: absolute; left: 0; bottom: 0; height: 2px; background: #c9a25a; border-radius: 1px; }
+.skillgrid .sk.cb i { background: #d76a4a; }
+.skillgrid .sk span { opacity: .8; }

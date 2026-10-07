@@ -188,11 +188,13 @@ function finishPick() {
     state.rep[fid] = (state.rep[fid] || 0) - 10;
   }
   if (!ok) {
+    sfx('fail', player.pos);
     if (Math.random() < 0.5) { state.goods.picks--; logMsg('Le crochet casse. Raté.'); } else logMsg('Raté. La serrure résiste.');
     return;
   }
   if (t.kind === 'cell') {
     openCell(t.ref);
+    sfx('unlock', player.pos);
     logMsg('🔓 La porte s\'ouvre ! Sortez discrètement.');
   } else {
     t.ref.opened = true;
@@ -265,8 +267,11 @@ function useKit() {
   if (!target && player.hp < player.maxHp) target = player;
   if (!target) { logMsg('Personne à soigner.'); return; }
   state.goods.kits--;
-  if (target.down > 0) { target.down = 0; target.hp = Math.round(target.maxHp * 0.4); logMsg(`Tu relèves ${target.name}.`); }
-  else target.hp = Math.min(target.maxHp, target.hp + 45);
+  const amt = 45 + sk(player, 'soins') * 0.8;
+  if (target.down > 0) { target.down = 0; target.hp = Math.round(Math.max(target.maxHp * 0.4, Math.min(target.maxHp, amt))); logMsg(`Tu relèves ${target.name}.`); }
+  else target.hp = Math.min(target.maxHp, target.hp + amt);
+  sfx('heal', target.pos);
+  trainSkill(player, 'soins', 2);
   drawBar(target);
   floatText(target.pos, '+ soins', '#8fdc7a');
 }
@@ -363,6 +368,7 @@ function rollSlaves(s) {
   for (let i = 0; i < randInt(2, 4); i++) {
     const skills = { forge: 0, couture: 0, bois: 0, recolte: randInt(5, 30), crochetage: 0 };
     if (Math.random() < 0.5) skills[pick(['forge', 'couture', 'bois'])] = randInt(10, 35);
+    Object.assign(skills, baseCombat(randInt(5, 25)));
     list.push({ name: genPerson(), maxHp: randInt(60, 95), str: randInt(1, 4), skills, price: randInt(70, 150) });
   }
   state.slaves = { town: s.name, list };

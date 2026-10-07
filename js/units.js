@@ -164,7 +164,7 @@ function dressUnit(u) {
   if (u.mode === 'bow' && IT(u.equip.bow) && !u.sheathed) c.bowSlot.add(buildBow());
   else {
     // arme rangée : à la ceinture ; dégainée : en main
-    if (u.equip.weapon) (u.sheathed ? c.hipSlot : c.weaponSlot).add(buildWeapon(u.equip.weapon));
+    if (u.equip.weapon) (u.sheathed || u.fists ? c.hipSlot : c.weaponSlot).add(buildWeapon(u.equip.weapon));
     if (u.equip.bow) { const b = buildBow(); b.rotation.z = 0.6; c.backSlot.add(b); }
   }
   if (u.carry) c.backSlot.add(part(0.55, 0.5, 0.4, '#8a6a40', 0, 0.15, -0.1));
@@ -241,7 +241,7 @@ function makeUnit(o) {
     blockChance: o.blockChance != null ? o.blockChance : 0.3, blockSkill: o.blockSkill || 0.5,
     arrows: o.arrows || 0, coins: o.coins || 0, goods: o.goods || {},
     level: o.level || 1, xp: o.xp || 0, stats: o.stats || null,
-    skills: { forge: 0, couture: 0, bois: 0, recolte: 0, crochetage: 0, ...(o.skills || {}) },
+    skills: { forge: 0, couture: 0, bois: 0, recolte: 0, crochetage: 0, ...baseCombat(o.combat || 5), ...(o.skills || {}) },
     sheathed: !!o.sheathed, jailed: null, fugitive: null, carriedBy: null, lastHitBy: null,
     yaw: rand(-3, 3), moving: 0, walk: 0, twist: 0,
     atkCd: rand(0, 1), atk: null, block: null, stagger: 0, draw: -1,
@@ -285,6 +285,7 @@ function makeTroop(fid, troop, x, z, extra = {}) {
     arrows: tpl.bow ? randInt(12, 20) : 0,
     coins: general ? randInt(80, 150) : fac.bandit ? randInt(3, 20) : randInt(5, 30),
     look: { body: fac.outfit.body, pants: fac.outfit.pants, skin: fac.culture === 'cannibale' ? '#8a4a32' : pick(SKIN_COLORS), height: rand(0.94, 1.08) + (general ? 0.05 : 0) },
+    combat: (TROOP_SKILL[troop] || 15) + (fac.bandit ? Math.min(state.day, 15) : 0),
     ...extra,
   });
   if (tpl.bow && !general) u.archer = true;
@@ -303,17 +304,48 @@ function makeAnimal(key, x, z) {
 }
 
 // ---------- Statistiques dérivées ----------
-const weaponOf = u => u.natural || IT(u.equip.weapon) || FIST;
+const weaponOf = u => u.natural || (u.fists ? FIST : IT(u.equip.weapon) || FIST);
+const isFists = u => !u.natural && weaponOf(u) === FIST;
+const TROOP_SKILL = { recrue: 8, milicien: 12, guerrier: 22, archer: 18, veteran: 38, chef: 45, general: 60, pillard: 14, garde: 25 };
+function baseCombat(v) {
+  const r = () => Math.max(0, Math.round(v + rand(-v * 0.3, v * 0.3)));
+  return { attaque: r(), defense: r(), poings: r(), arc: r(), force: r(), endurance: r(), athletisme: r(), soins: Math.round(v * 0.5) };
+}
+const sk = (u, k) => (u.skills && u.skills[k]) || 0;
+// s'entraîner : rapide au début, de plus en plus lent, plus rapide face à plus fort que soi
+function trainSkill(u, k, amount = 1, foe = null) {
+  if (!u.skills || u.animal) return;
+  const v = sk(u, k);
+  if (v >= 100) return;
+  let rate = amount * 0.6 * Math.pow(1 - v / 101, 1.4);
+  if (foe && foe.skills) rate *= clamp((sk(foe, k === 'defense' || k === 'endurance' ? 'attaque' : 'defense') + 15) / (v + 15), 0.4, 2.5);
+  const nv = Math.min(100, v + rate);
+  u.skills[k] = nv;
+  if (Math.floor(nv) > Math.floor(v)) {
+    if (k === 'endurance') { u.maxHp += 1; u.hp += 1; }
+    u.level = levelOf(u);
+    if (isPlayerSide(u) && (u.isPlayer || Math.floor(nv) % 5 === 0)) {
+      floatText(u.pos, `${SKILLS[k]} ${Math.floor(nv)}`, '#7ad7ff');
+      if (u.isPlayer) sfx('skill', null, 0.6);
+    }
+  }
+}
+const levelOf = u => 1 + Math.floor((sk(u, 'attaque') + sk(u, 'defense') + sk(u, 'endurance') + sk(u, 'force') + sk(u, 'athletisme')) / 50);
 const bowOf = u => IT(u.equip.bow) || null;
 const armorOf = u => (IT(u.equip.armor) ? IT(u.equip.armor).armor : 0) + (IT(u.equip.helmet) ? IT(u.equip.helmet).armor : 0);
 function speedOf(u) {
-  let s = u.speedBase + (IT(u.equip.armor) && IT(u.equip.armor).speed || 0);
+  let s = (u.speedBase + (IT(u.equip.armor) && IT(u.equip.armor).speed || 0)) * (1 + sk(u, 'athletisme') * 0.0025);
   if (isPlayerSide(u) && typeof overloaded === 'function' && overloaded()) s *= 0.6;
   if (isPlayerSide(u) && state.storm > 0 && biomeAt(u.pos.x, u.pos.z) === 'desert') s *= 0.8;
   return s;
 }
-const cooldownOf = u => weaponOf(u).cd * (1 - u.agi * 0.03);
-const damageOf = u => Math.round(weaponOf(u).dmg + u.str);
+const cooldownOf = u => weaponOf(u).cd * (1 - u.agi * 0.03) * (1 - sk(u, isFists(u) ? 'poings' : 'attaque') * 0.002);
+const damageOf = u => {
+  if (u.natural) return Math.round(u.natural.dmg + u.str);
+  const fists = isFists(u);
+  const s = sk(u, fists ? 'poings' : 'attaque');
+  return Math.round((weaponOf(u).dmg + u.str + sk(u, 'force') / 10) * (1 + s * (fists ? 0.012 : 0.008)));
+};
 
 // ---------- Relations ----------
 function playerHostileTo(fid) {
@@ -392,15 +424,17 @@ function startAttack(u, dir) {
   if (u.sheathed) { setSheathed(u, false); return false; }
   const windup = u.isPlayer ? 0.28 : u.animal ? 0.35 : 0.5;
   if (u.isPlayer && !settings.directional) { u.combo = ((u.combo || 0) + 1) % 3; dir = ['droite', 'gauche', 'haut'][u.combo]; }
+  if (isFists(u)) { u.combo = ((u.combo || 0) + 1) % 2; dir = 'estoc'; }
   u.atk = { t: 0, dir: dir || pick(Object.keys(DIRS)), windup, total: windup + 0.35, hit: false };
+  if (u.animal && Math.random() < 0.35) sfx('growl', u.pos, u.species.size);
   u.atkCd = cooldownOf(u) + windup;
   const reach = weaponOf(u).reach;
   for (const o of units) {
     if (o === u || o.isPlayer || o.animal || !alive(o) || !canHit(u, o) || o.atk || o.mode === 'bow') continue;
     if (d2(u.pos, o.pos) > reach + 1.5 || facing(o, u) < 0.3 || blockedBetween(u.pos, o.pos)) continue;
-    if (Math.random() < o.blockChance) {
+    if (Math.random() < o.blockChance + sk(o, 'defense') * 0.004) {
       const others = Object.keys(DIRS).filter(d => d !== u.atk.dir);
-      o.block = { dir: Math.random() < o.blockSkill ? u.atk.dir : pick(others), t: windup + 0.6 };
+      o.block = { dir: Math.random() < o.blockSkill + sk(o, 'defense') * 0.003 ? u.atk.dir : pick(others), t: windup + 0.6 };
     }
   }
   return true;
@@ -409,6 +443,9 @@ function startAttack(u, dir) {
 function resolveHit(u) {
   const w = weaponOf(u);
   let hits = 0;
+  sfx(w.dmg >= 14 ? 'heavy' : 'swing', u.pos, 0.8);
+  // petit pas en avant au moment du coup (élan)
+  if (u.isPlayer) { u.knock.x += Math.sin(u.yaw) * 2.2; u.knock.z += Math.cos(u.yaw) * 2.2; }
   for (const o of units) {
     if (!alive(o) || !canHit(u, o)) continue;
     if (d2(u.pos, o.pos) > w.reach + 0.3 || facing(u, o) < 0.35) continue;
@@ -416,6 +453,7 @@ function resolveHit(u) {
     if (blockedBetween(u.pos, o.pos)) continue;
     if (u.cmd && u.cmd.type === 'attack' && u.cmd.target !== o && !hostile(u, o)) continue;
     damage(o, u, damageOf(u) * rand(0.85, 1.15), u.atk.dir, false);
+    if (isPlayerSide(u) || Math.random() < 0.3) { trainSkill(u, isFists(u) ? 'poings' : 'attaque', 1, o); trainSkill(u, 'force', 0.3 + w.dmg / 40); }
     if (++hits >= (u.isPlayer ? 2 : 1)) break;
   }
   if (!hits && u.isPlayer) floatText(u.pos, '~', '#ccc');
@@ -423,17 +461,35 @@ function resolveHit(u) {
 
 function damage(o, by, amount, dir, ranged) {
   if (!alive(o)) return;
+  if (o.dodge && o.dodge.t < o.dodge.iframes) { floatText(o.pos, 'esquive', '#cfe8ff'); trainSkill(o, 'athletisme', 0.8, by); return; }
   let blocked = false;
   if (!ranged && o.block && facing(o, by) > 0.3) {
     if (o.block.dir === dir || (o.isPlayer && !settings.directional) || (isPlayerSide(o) && !o.isPlayer)) {
       blocked = true;
       amount *= 0.08;
       floatText(o.pos, 'paré !', '#9fc3ff');
+      sfx('block', o.pos);
+      burst({ x: (o.pos.x + by.pos.x) / 2, y: o.pos.y + 1.3, z: (o.pos.z + by.pos.z) / 2 }, { n: 10, color: ['#fff3b0', '#ffd060', '#ffffff'], speed: 5, up: 3, life: 0.35, size: 0.05, grav: 12 });
+      if (o.isPlayer || by.isPlayer) impact(0.18, 0.05);
+      trainSkill(o, 'defense', 1.2, by);
       by.stagger = 0.5;
       by.atkCd += 0.3;
     } else if (o.isPlayer) floatText(o.pos, 'mauvaise parade', '#ffb0a0');
   }
-  amount *= Math.max(0.3, 1 - armorOf(o) * 0.055);
+  amount *= Math.max(0.3, 1 - armorOf(o) * 0.055) * (1 - sk(o, 'endurance') * 0.003);
+  if (!blocked) {
+    trainSkill(o, 'endurance', ranged ? 0.6 : 0.9, by);
+    if (!ranged && !o.block) trainSkill(o, 'defense', 0.35, by);
+    const fists = !ranged && isFists(by);
+    sfx(ranged ? 'arrowHit' : fists ? 'punch' : 'hit', o.pos);
+    const dx = o.pos.x - by.pos.x, dz = o.pos.z - by.pos.z, dd = Math.hypot(dx, dz) || 1;
+    const hp = { x: o.pos.x, y: o.pos.y + (o.animal ? 0.6 * o.species.size : 1.2), z: o.pos.z };
+    burst(hp, { n: fists ? 6 : 12, color: fists ? ['#e8d8b8', '#cbb894'] : o.animal || !o.species ? ['#7a1010', '#a01818', '#5a0808'] : ['#7a1010'], speed: 4, up: 2.5, life: 0.5, size: 0.06, dir: { x: dx / dd, z: dz / dd }, spread: 0.7 });
+    burst({ x: o.pos.x, y: o.pos.y + 0.05, z: o.pos.z }, { n: 5, color: ['#c9b48a', '#a8916a'], speed: 1.5, up: 0.8, life: 0.7, size: 0.12, grav: 1, grow: 1.5 });
+    if (by.isPlayer) impact(0.22, 0.07);
+    else if (o.isPlayer) impact(0.32, 0.05);
+    o.flinch = 0.25;
+  }
   amount = Math.max(blocked ? 0 : 1, Math.round(amount));
   if (isPlayerSide(by) && !isPlayerSide(o) && !o.animal && !isFugitiveFor(by, o.faction) && !hostileF('player', o.faction)) playerAttacked(o.faction);
   o.lastHitBy = by.faction;
@@ -460,14 +516,9 @@ function damage(o, by, amount, dir, ranged) {
 }
 
 function gainXp(u, n) {
+  // plus de niveaux à gagner : on progresse en se servant de ses compétences (comme dans Kenshi)
   u.xp += n;
-  const need = u.level * 40;
-  if (u.xp < need) return;
-  u.xp -= need;
-  u.level++;
-  u.maxHp += 10; u.hp = Math.min(u.maxHp, u.hp + 30); u.str += 1;
-  floatText(u.pos, 'Niveau ' + u.level + ' !', '#7ad7ff');
-  logMsg(`${u.name} passe niveau ${u.level}.`);
+  u.level = levelOf(u);
 }
 
 function makeLoot(o) {
@@ -494,7 +545,10 @@ function kill(o, by) {
   // ton escouade n'est jamais tuée : elle tombe K.O. comme dans Kenshi
   if (isPlayerSide(o)) { downUnit(o); return; }
   // les humains tombent souvent K.O. au lieu de mourir (on peut les fouiller, les porter, les livrer)
-  if (!o.animal && !o.civil && o.rank !== 'ruler' && !o.down && !o.noKO && Math.random() < 0.5) { npcDown(o); return; }
+  const koChance = by && isFists(by) ? 1 : 0.5;
+  if (!o.animal && !o.civil && o.rank !== 'ruler' && !o.down && !o.noKO && Math.random() < koChance) { npcDown(o); return; }
+  sfx('death', o.pos, 0.7);
+  if (by && (by.isPlayer || o.isPlayer)) impact(0.3, 0.12);
   o.dead = true;
   o.atk = null; o.block = null; o.draw = -1;
   if (o.bar) o.bar.sp.visible = false;
@@ -521,6 +575,9 @@ function npcDown(o) {
   o.loot = makeLoot(o);
   for (const u of units) if (u.target === o) u.target = null;
   floatText(o.pos, 'K.O.', '#ffd27a');
+  sfx('ko', o.pos);
+  burst({ x: o.pos.x, y: o.pos.y + 0.1, z: o.pos.z }, { n: 14, color: ['#c9b48a', '#a8916a', '#d8c8a0'], speed: 3, up: 1, life: 0.9, size: 0.14, grav: 1, grow: 2 });
+  if (player && d2(o.pos, player.pos) < 6) impact(0.25, 0.1);
 }
 function npcWake(o) {
   o.down = 0;
@@ -542,6 +599,7 @@ function downUnit(o) {
   if (o.carrying) dropCarried(o);
   for (const u of units) if (u.target === o) u.target = null;
   floatText(o.pos, 'K.O.', '#ff6b6b');
+  sfx('ko', o.pos);
   logMsg(`${o.name} est à terre !`, 'warn');
   if (o.jailed) return;
   // défaite : plus personne debout autour du combat
@@ -579,6 +637,8 @@ function fireArrow(u, from, dir, speed, dmg) {
   m.position.copy(from);
   scene.add(m);
   arrows.push({ m, pos: m.position, vel: dir.clone().multiplyScalar(speed), owner: u, dmg, life: 5, stuck: false });
+  sfx('bow', from);
+  trainSkill(u, 'arc', 0.4);
 }
 const GRAV = 4;
 const _v = new T.Vector3();
@@ -595,6 +655,8 @@ function updateArrows(dt) {
     if (wallBetween(prev, a.pos) || (a.pos.y < ground + 4.6 && ringBetween(prev, a.pos))) {
       a.pos.x = prev.x; a.pos.z = prev.z;
       a.stuck = true; a.life = Math.min(a.life, 6);
+      sfx('thunk', a.pos, 0.7);
+      burst(a.pos, { n: 5, color: ['#b09070', '#8a7050'], speed: 2, up: 1, life: 0.4, size: 0.05 });
       continue;
     }
     a.m.lookAt(_v.copy(a.pos).add(a.vel));
@@ -606,7 +668,8 @@ function updateArrows(dt) {
       const r = o.animal ? 0.6 * o.species.size : 0.45;
       if (Math.hypot(a.pos.x - o.pos.x, a.pos.z - o.pos.z) < r && a.pos.y > o.pos.y && a.pos.y < o.pos.y + h) {
         const head = !o.animal && a.pos.y > o.pos.y + h * 0.85;
-        damage(o, a.owner, a.dmg * (head ? 1.6 : 1) * rand(0.9, 1.1), null, true);
+        damage(o, a.owner, a.dmg * (head ? 1.6 : 1) * (1 + sk(a.owner, 'arc') / 100) * rand(0.9, 1.1), null, true);
+        trainSkill(a.owner, 'arc', 1, o);
         if (head && a.owner.isPlayer) floatText(o.pos, 'Tête !', '#ffe066');
         hit = true;
         break;
@@ -903,8 +966,9 @@ function updatePlayerSideAI(u, dt, idx) {
     }
   }
   if (state.order === 'close' && u.target && d2(u.target.pos, player.pos) > 10) u.target = null;
-  if (u.target) { fight(u, u.target, dt); return; }
+  if (u.target) { u.heal = null; fight(u, u.target, dt); return; }
   setMode(u, 'melee');
+  if (autoHeal(u, dt)) return;
   if (u.assignedNode != null && updateAssignedWorker(u, dt)) return;
   const row = Math.floor(idx / 3), col = (idx % 3) - 1;
   const spacing = state.order === 'close' ? 1.2 : 1.6;
@@ -913,6 +977,40 @@ function updatePlayerSideAI(u, dt, idx) {
   const tz = player.pos.z - Math.cos(py) * back + Math.sin(py) * side;
   const far = Math.hypot(tx - u.pos.x, tz - u.pos.z);
   steer(u, tx, tz, dt, far > 5 || state.run ? 1.7 : 1, 0.5);
+}
+
+// soins automatiques : un membre de l'escouade relève les blessés quand le danger est passé
+function autoHeal(u, dt) {
+  if (u.jailed || u.carrying) return false;
+  if (!u.heal) {
+    u.healCheck = (u.healCheck || 0) - dt;
+    if (u.healCheck > 0) return false;
+    u.healCheck = 1;
+    if (state.goods.kits <= 0 || nearestHostile(u, 16)) return false;
+    const busy = o => team().some(m => m !== u && m.heal && m.heal.o === o);
+    let o = team().find(m => m.down > 0 && !m.jailed && !m.carriedBy && d2(m.pos, u.pos) < 30 && !busy(m));
+    if (!o) o = team().filter(m => !(m.down > 0) && !m.jailed && m.hp < m.maxHp * 0.5 && d2(m.pos, u.pos) < 30 && !busy(m)).sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
+    if (!o) return false;
+    u.heal = { o, t: 0 };
+  }
+  const h = u.heal, o = h.o;
+  if (state.goods.kits <= 0 || o.dead || o.jailed || o.carriedBy || (!(o.down > 0) && o.hp >= o.maxHp * 0.9) || nearestHostile(u, 12)) { u.heal = null; u.working = false; return false; }
+  if (o !== u && d2(o.pos, u.pos) > 1.4) { u.working = false; steer(u, o.pos.x, o.pos.z, dt, 1.4, 1.2); return true; }
+  if (o !== u) u.yaw = turnToward(u.yaw, Math.atan2(o.pos.x - u.pos.x, o.pos.z - u.pos.z), dt * 8);
+  u.moving = 0; u.working = true;
+  h.t += dt;
+  if (h.t < 2.6 - sk(u, 'soins') * 0.018) return true;
+  state.goods.kits--;
+  const amt = 40 + sk(u, 'soins') * 0.8;
+  if (o.down > 0) { o.down = 0; o.hp = Math.round(Math.max(o.maxHp * 0.3, Math.min(o.maxHp, amt))); logMsg(`🩹 ${u.name} relève ${o === u ? 'lui-même' : o.name}.`); }
+  else o.hp = Math.min(o.maxHp, o.hp + amt);
+  drawBar(o);
+  floatText(o.pos, '+ soins', '#8fdc7a');
+  sfx('heal', o.pos);
+  burst({ x: o.pos.x, y: o.pos.y + 1, z: o.pos.z }, { n: 10, color: ['#9fe08a', '#d8ffd0'], speed: 1, up: 2, life: 0.8, size: 0.06, grav: -1 });
+  trainSkill(u, 'soins', 2);
+  u.heal = null; u.working = false;
+  return true;
 }
 
 function updateAnimal(u, dt) {
@@ -1012,7 +1110,23 @@ function animate(u, dt) {
     c.tail.rotation.y = Math.sin(performance.now() / 300 + u.id) * 0.3;
   } else {
     c.body.rotation.x = down ? Math.max(c.body.rotation.x - dt * 4, -Math.PI / 2) : 0;
-    if (down) { c.body.rotation.y = 0; return; }
+    if (down) { c.body.rotation.y = 0; c.body.position.y = 0; return; }
+    // roulade d'esquive
+    if (u.dodge) {
+      const p = clamp(u.dodge.t / u.dodge.dur, 0, 1);
+      c.body.rotation.x = p * Math.PI * 2 * (u.dodge.back ? -1 : 1);
+      c.body.position.y = Math.sin(p * Math.PI) * 0.35;
+      c.legL.rotation.x = c.legR.rotation.x = -1.2 * Math.sin(p * Math.PI);
+      c.armL.rotation.x = c.armR.rotation.x = -1.4 * Math.sin(p * Math.PI);
+      return;
+    }
+    c.body.position.y = 0;
+    // recul quand on encaisse, élan vers l'avant pendant un coup
+    if (u.flinch > 0) { u.flinch -= dt; c.body.rotation.x = -Math.sin(u.flinch / 0.25 * Math.PI) * 0.35; }
+    else if (u.atk) {
+      const a = u.atk, p = a.t / a.windup;
+      c.body.rotation.x = p < 1 ? -0.12 * p : 0.25 * Math.max(0, 1 - (a.t - a.windup) / (a.total - a.windup));
+    }
     u.walk += dt * (u.moving ? 6 + u.moving * 4 : 0);
     const sw = u.moving ? Math.sin(u.walk) * 0.7 : 0;
     c.legL.rotation.x = sw; c.legR.rotation.x = -sw;
@@ -1024,7 +1138,13 @@ function animate(u, dt) {
       const a = u.atk, p = a.t < a.windup ? a.t / a.windup : 1 + (a.t - a.windup) / (a.total - a.windup);
       switch (a.dir) {
         case 'haut': aR = p < 1 ? lerp(-0.5, -2.8, p) : lerp(-2.8, -0.6, p - 1); aRz = -0.3; break;
-        case 'estoc': aR = p < 1 ? lerp(-0.5, 0.5, p) : lerp(0.5, -1.6, (p - 1) * 2); break;
+        case 'estoc':
+          if (isFists(u)) {
+            const punch = p < 1 ? lerp(-0.9, -0.4, p) : lerp(-0.4, -1.65, Math.min(1, (p - 1) * 3)) + Math.max(0, (p - 1.5)) * 1.2;
+            if (u.combo === 1) { aL = punch; aR = -1.0; twist = p < 1 ? lerp(0, 0.3, p) : lerp(0.3, -0.35, p - 1); }
+            else { aR = punch; aL = -1.0; twist = p < 1 ? lerp(0, -0.3, p) : lerp(-0.3, 0.35, p - 1); }
+          } else aR = p < 1 ? lerp(-0.5, 0.5, p) : lerp(0.5, -1.6, (p - 1) * 2);
+          break;
         case 'gauche': aR = -1.5; twist = p < 1 ? lerp(0, 1.0, p) : lerp(1.0, -0.9, p - 1); break;
         case 'droite': aR = -1.5; aRz = 0.4; twist = p < 1 ? lerp(0, -1.0, p) : lerp(-1.0, 0.9, p - 1); break;
       }

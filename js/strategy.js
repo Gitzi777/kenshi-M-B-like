@@ -423,8 +423,7 @@ function createFaction(parent, place) {
   ensureHierarchy(f);
   for (const o of majorFactions()) {
     if (o.id === f.id) continue;
-    const rel = parent && o.id !== parent.id ? (state.relations[relKey(parent.id, o.id)] || 'peace') : 'peace';
-    setRelation(f.id, o.id, rel);
+    setRelation(f.id, o.id, 'peace');
   }
   if (parent) setRelation(f.id, parent.id, 'war');
   return f;
@@ -463,8 +462,9 @@ function eventNewFaction() {
   makeSettlement({ name: place, x: spot.x, z: spot.z, faction: f.id, type: 'camp', capital: true, garrison: 5, pop: randInt(50, 80) });
   for (const n of state.nodes) if (!n.owner && d2(n, spot) < 200) { n.owner = place; refreshNodeFlag(n); }
   const near = nearestSettlement(spot, s => s.faction !== f.id && !F(s.faction).bandit);
-  if (near) setRelation(f.id, near.faction, 'war');
-  addChronicle(`${f.leader} fonde ${place} et proclame ${theF(f)}.` + (near ? ` La guerre éclate avec ${theF(F(near.faction))}.` : ''), '🏴');
+  const war = near && Math.random() < 0.3;
+  if (war) setRelation(f.id, near.faction, 'war');
+  addChronicle(`${f.leader} fonde ${place} et proclame ${theF(f)}.` + (war ? ` La guerre éclate avec ${theF(F(near.faction))}.` : ''), '🏴');
   spawnPatrol(f.id); spawnPatrol(f.id);
   return true;
 }
@@ -472,6 +472,9 @@ function eventNewFaction() {
 function eventWar() {
   const pairs = [];
   const fs = majorFactions();
+  // au plus une guerre à la fois entre grandes factions
+  const warring = fs.filter(f => fs.some(o => o !== f && atWar(f.id, o.id)));
+  if (warring.length) return false;
   for (const a of fs) for (const b of fs) if (a.id < b.id && !atWar(a.id, b.id)) pairs.push([a, b]);
   if (!pairs.length) return false;
   const [a, b] = pick(pairs);
@@ -484,7 +487,7 @@ function eventPeace() {
   const pairs = [];
   const fs = majorFactions();
   for (const a of fs) for (const b of fs) {
-    if (a.id < b.id && atWar(a.id, b.id) && (state.clock || 0) - (state.warSince[relKey(a.id, b.id)] || 0) > 150) pairs.push([a, b]);
+    if (a.id < b.id && atWar(a.id, b.id) && (state.clock || 0) - (state.warSince[relKey(a.id, b.id)] || 0) > 100) pairs.push([a, b]);
   }
   if (!pairs.length) return false;
   const [a, b] = pick(pairs);
@@ -551,10 +554,11 @@ function worldEvent() {
   checkExtinctions();
   const r = Math.random();
   let ok = false;
-  if (r < 0.22) ok = eventWar();
-  else if (r < 0.40) ok = eventPeace();
-  else if (r < 0.54) ok = eventSplit();
-  else if (r < 0.66) ok = eventNewFaction();
+  // le monde reste globalement stable : les guerres sont rares, la paix revient
+  if (r < 0.07) ok = eventWar();
+  else if (r < 0.30) ok = eventPeace();
+  else if (r < 0.35) ok = eventSplit();
+  else if (r < 0.41) ok = eventNewFaction();
   else if (r < 0.83) ok = eventEconomy();
   else ok = Math.random() < 0.5 ? eventRaidNode() || eventRaid() : eventRaid();
   if (!ok) eventEconomy();
@@ -567,7 +571,7 @@ function updateWorld(dt) {
   state.spawnTimer -= dt;
   if (state.spawnTimer <= 0) { state.spawnTimer = 8; spawnTick(); }
   state.eventTimer -= dt;
-  if (state.eventTimer <= 0) { state.eventTimer = rand(55, 95); worldEvent(); }
+  if (state.eventTimer <= 0) { state.eventTimer = rand(110, 180); worldEvent(); }
   state.garrisonTimer -= dt;
   if (state.garrisonTimer <= 0) {
     state.garrisonTimer = 60;

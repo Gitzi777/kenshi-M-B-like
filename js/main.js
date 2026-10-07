@@ -177,6 +177,47 @@ function attackMyTarget() {
   for (const u of squad()) if (u.assignedNode == null) u.cmd = { type: 'attack', target: best };
   logMsg(`« Attaquez ${best.name} ! »`);
 }
+// X : arme → arc → poings → arme
+function cycleWeapon() {
+  const hasW = !!IT(player.equip.weapon), hasB = !!bowOf(player);
+  const cur = player.mode === 'bow' ? 'arc' : player.fists || !hasW ? 'poings' : 'arme';
+  const order = ['arme', 'arc', 'poings'].filter(m => m === 'poings' || (m === 'arme' ? hasW : hasB));
+  const next = order[(order.indexOf(cur) + 1) % order.length];
+  player.fists = next === 'poings';
+  setMode(player, next === 'arc' ? 'bow' : 'melee');
+  if (player.sheathed) setSheathed(player, false);
+  dressUnit(player);
+  sfx('click', null, 0.8);
+  logMsg({ arme: 'Arme de mêlée en main.', arc: 'Arc en main.', poings: '👊 À mains nues : les coups de poing assomment au lieu de tuer.' }[next]);
+}
+// Option (⌥) : roulade d'esquive, invulnérable au début
+function startDodge() {
+  const u = player;
+  if (!u || u.dodge || u.down > 0 || u.jailed || u.carrying || (u.dodgeCd || 0) > 0 || isRTS()) return;
+  let dx = 0, dz = 0;
+  const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0), s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+  const tank = isFollow() && settings.tank !== false;
+  if (tank) {
+    // en vue suivie : Z/S avant-arrière, Q/D de côté
+    const yaw = u.yaw + (s && !f ? -s * Math.PI / 2 : 0);
+    const dir = f < 0 ? -1 : 1;
+    dx = Math.sin(yaw) * (s && !f ? 1 : dir); dz = Math.cos(yaw) * (s && !f ? 1 : dir);
+  } else {
+    const vy = isFollow() ? fol.yaw : cam.yaw, fx = Math.sin(vy), fz = Math.cos(vy);
+    dx = fx * f - fz * s; dz = fz * f + fx * s;
+  }
+  let len = Math.hypot(dx, dz);
+  const back = !f && !s;
+  if (back) { dx = -Math.sin(u.yaw); dz = -Math.cos(u.yaw); len = 1; }
+  dx /= len; dz /= len;
+  u.atk = null; u.block = null; u.draw = -1;
+  u.dodge = { t: 0, dur: 0.42, iframes: 0.3, dx, dz, back };
+  if (!back) u.yaw = Math.atan2(dx, dz);
+  u.dodgeCd = 0.75;
+  sfx('dodge', u.pos);
+  burst({ x: u.pos.x, y: u.pos.y + 0.05, z: u.pos.z }, { n: 8, color: ['#c9b48a', '#d8c8a0'], speed: 2, up: 0.6, life: 0.7, size: 0.13, grav: 0.5, grow: 2 });
+  trainSkill(u, 'athletisme', 0.3);
+}
 function cycleControl() {
   const list = team().filter(u => !(u.down > 0));
   if (list.length < 2) return;
@@ -211,6 +252,7 @@ window.addEventListener('keydown', e => {
     const c = nearCorpse();
     if (c) { state.lootTarget = c; openPanel('loot'); }
   } else if (state.panel) return;
+  else if ((e.code === 'AltLeft' || e.code === 'AltRight') && !e.repeat) { e.preventDefault(); startDodge(); }
   else if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) {
     state.run = !state.run;
     logMsg(state.run ? '🏃 Course activée (Maj pour marcher).' : '🚶 Marche.');
@@ -223,10 +265,7 @@ window.addEventListener('keydown', e => {
   else if (k === 'h') useKit();
   else if (k === 'k') finishOffNear();
   else if (k === 'c') cycleControl();
-  else if (k === 'x') {
-    if (bowOf(player)) { setMode(player, player.mode === 'bow' ? 'melee' : 'bow'); logMsg(player.mode === 'bow' ? 'Arc en main.' : 'Arme de mêlée en main.'); }
-    else logMsg("Tu n'as pas d'arc équipé.");
-  } else if (k === 't') {
+  else if (k === 'x') cycleWeapon(); else if (k === 't') {
     state.timeScale = state.timeScale > 1 ? 1 : 4;
     logMsg(state.timeScale > 1 ? '⏩ Le temps passe plus vite (T pour revenir).' : 'Vitesse normale.');
   } else if (e.code === 'Space' && isRTS()) { rts.x = player.pos.x; rts.z = player.pos.z; }
@@ -372,6 +411,18 @@ function releaseArrow() {
 // ---------- Personnage contrôlé ----------
 function updatePlayer(dt) {
   if (player.down > 0) return;
+  player.dodgeCd = (player.dodgeCd || 0) - dt;
+  if (player.dodge) {
+    const d = player.dodge;
+    d.t += dt;
+    const p = d.t / d.dur;
+    const spd = 13 * Math.pow(Math.max(0, 1 - p), 1.3) + 1;
+    player.pos.x += d.dx * spd * dt; player.pos.z += d.dz * spd * dt;
+    player.vx = d.dx * 2; player.vz = d.dz * 2;
+    player.moving = 0;
+    if (p >= 1) { player.dodge = null; burst({ x: player.pos.x, y: player.pos.y + 0.05, z: player.pos.z }, { n: 5, color: ['#c9b48a'], speed: 1.5, up: 0.4, life: 0.6, size: 0.12, grav: 0.5, grow: 2 }); }
+    return;
+  }
   if (isRTS()) {
     // en vue tactique, ton personnage obéit aux ordres et se défend seul
     if (!player.cmd) {
@@ -391,12 +442,8 @@ function updatePlayer(dt) {
   if (tank && !state.harvest && !state.picking) {
     if (s) player.yaw -= s * dt * (f < 0 ? -2.4 : 2.4);
     if (f || s) player.cmd = null;
-    if (f) {
-      const mul = (f < 0 ? 0.6 : 1) * (player.block || player.atk ? 0.5 : state.run ? 1.6 : 1) * (player.carrying ? 0.65 : 1);
-      player.pos.x += Math.sin(player.yaw) * f * speedOf(player) * mul * dt;
-      player.pos.z += Math.cos(player.yaw) * f * speedOf(player) * mul * dt;
-      player.moving = mul;
-    } else if (!player.cmd) player.moving = 0;
+    const mul = f ? (f < 0 ? 0.6 : 1) * (player.block || player.atk ? 0.5 : state.run ? 1.6 : 1) * (player.carrying ? 0.65 : 1) : 0;
+    accelerate(player, Math.sin(player.yaw) * f * speedOf(player) * mul, Math.cos(player.yaw) * f * speedOf(player) * mul, dt);
     if (player.draw >= 0) player.draw += dt;
     player.working = false;
     return;
@@ -421,18 +468,36 @@ function updatePlayer(dt) {
   const combat = player.block || player.atk || player.draw >= 0;
   // vue suivie, arme dégainée : le personnage regarde vers le curseur
   const aimYaw = follow && !player.sheathed && mouse.ground ? Math.atan2(mouse.ground.x - player.pos.x, mouse.ground.z - player.pos.z) : null;
+  const mul = len > 0 ? (combat ? 0.5 : state.run ? 1.6 : 1) * (player.carrying ? 0.65 : 1) : 0;
+  if (len > 0) { mx /= len; mz /= len; }
+  accelerate(player, mx * speedOf(player) * mul, mz * speedOf(player) * mul, dt);
   if (len > 0) {
-    mx /= len; mz /= len;
-    const mul = (combat ? 0.5 : state.run ? 1.6 : 1) * (player.carrying ? 0.65 : 1);
-    player.pos.x += mx * speedOf(player) * mul * dt;
-    player.pos.z += mz * speedOf(player) * mul * dt;
-    player.moving = mul;
     if (!combat && aimYaw == null) player.yaw = turnToward(player.yaw, Math.atan2(mx, mz), dt * 12);
     // la caméra se replace doucement derrière toi quand tu avances
     if (follow && f > 0 && s === 0 && player.sheathed) fol.yaw = turnToward(fol.yaw, player.yaw, dt * 1.6);
-  } else if (!player.cmd) player.moving = 0;
+  }
   if (aimYaw != null) player.yaw = turnToward(player.yaw, aimYaw, dt * 14);
   else if (combat && !follow) player.yaw = turnToward(player.yaw, cam.yaw, dt * 14);
+}
+
+// accélération et freinage doux : le personnage a du poids
+function accelerate(u, vx, vz, dt) {
+  u.vx = u.vx || 0; u.vz = u.vz || 0;
+  const want = Math.hypot(vx, vz), have = Math.hypot(u.vx, u.vz);
+  const k = 1 - Math.exp(-dt * (want > have ? 10 : 14));
+  u.vx += (vx - u.vx) * k; u.vz += (vz - u.vz) * k;
+  if (Math.hypot(u.vx, u.vz) < 0.05 && !want) { u.vx = 0; u.vz = 0; }
+  u.pos.x += u.vx * dt; u.pos.z += u.vz * dt;
+  const sp = Math.hypot(u.vx, u.vz);
+  if (sp > 0.1 || !u.cmd) u.moving = sp / Math.max(1, speedOf(u));
+  if (sp > speedOf(u) * 1.2) trainSkill(u, 'athletisme', dt * 0.06);
+  // bruits de pas et petite poussière
+  u.stepT = (u.stepT || 0) + dt * sp;
+  if (u.stepT > 1.6) {
+    u.stepT = 0;
+    sfx('step', u.pos, sp > 6 ? 1.6 : 1);
+    if (sp > 6 || biomeAt(u.pos.x, u.pos.z) === 'desert') burst({ x: u.pos.x, y: u.pos.y + 0.03, z: u.pos.z }, { n: 2, color: ['#cdb88f', '#bba57c'], speed: 0.6, up: 0.4, life: 0.6, size: 0.1, grav: 0.3, grow: 1.5 });
+  }
 }
 
 // ---------- Boucle de jeu ----------
@@ -641,12 +706,19 @@ let hudTimer = 0;
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  // pause à l'impact : le temps se fige un court instant quand un coup porte
+  let sim = dt;
+  if (fx.hitstop > 0) { fx.hitstop -= dt; sim = dt * 0.06; }
   if (state.mode === 'play' && !state.panel) {
-    for (let i = 0; i < state.timeScale; i++) update(dt);
+    for (let i = 0; i < state.timeScale; i++) update(sim);
+    updateAmbience(dt);
+    updateMotes(dt);
   }
   dirAcc.x *= 0.85; dirAcc.y *= 0.85;
-  for (const u of units) animate(u, dt);
+  for (const u of units) animate(u, sim);
+  updateParticles(sim);
   updateCamera(dt);
+  applyShake(dt);
   updateSky();
   waveFlags(now / 1000);
   updateRoofs();

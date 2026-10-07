@@ -37,7 +37,14 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
   ou des compagnons), d'autres l'interdisent.
 - **Dangers** : hyènes, loups, ours, scorpions géants (plus nombreux la nuit, ils attaquent aussi les villageois), gibier à chasser pour la viande
   et le cuir, cannibales et brigands avec leurs repaires, tempêtes de sable dans le désert.
-- **Combat** : parade automatique par défaut, combat directionnel en option. Arcs et flèches.
+- **Combat** : parade, roulade d'esquive, combat à mains nues (les poings assomment au lieu de tuer), arcs.
+  Pause à l'impact, tremblement de caméra, étincelles de parade, sang, poussière. Coups et flèches arrêtés par les murs.
+  Option « frapper les neutres » (désactivée par défaut) pour ne pas déclencher de guerre par accident.
+- **Compétences façon Kenshi** : attaque, défense, poings, tir, force, endurance, athlétisme, soins, artisanat…
+  Elles montent en s'en servant jusqu'à 100, plus vite face à plus fort que soi.
+- **Escouade autonome** : les membres se soignent et relèvent les blessés tout seuls quand le danger est passé.
+- **Sons** : coups, parades, flèches, pas, vent, oiseaux, grillons, rumeur des villes (synthétisés, aucun fichier).
+- **Monde plus stable** : guerres rares (une à la fois au plus), la paix revient.
 - **Équipement, fouille des corps, réputation, serment, sauvegarde.**
 
 ## Contrôles
@@ -47,13 +54,14 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
 | Avancer, reculer / tourner (vue suivie) | Z, S / Q, D (la caméra reste derrière toi) |
 | Regarder autour / zoomer | Trackpad : 2 doigts ↔ / 2 doigts ↕ ou pincer · souris : flèches et molette |
 | Parer | Espace maintenu (ou clic droit) |
+| Esquiver (roulade) | ⌥ Option (Alt) |
 | Achever un ennemi assommé | K |
 | Dégainer / ranger l'arme | R |
 | Porter un corps / soigner | G / H |
 | Courir ou marcher (bascule) | Maj |
 | Changer de caméra (suivie, tactique, épaule) / de perso | V / C |
 | Frapper (vers le curseur) | Clic gauche |
-| Arc ou mêlée | X |
+| Arme, arc ou poings | X |
 | Ville ou exploitation, fouiller, inventaire, carte | E, F, I, M |
 | Ordres à l'escouade | 1 suivre · 2 charger · 3 tenir · 4 groupés · 5 attaquer ma cible |
 | Temps accéléré, réglages | T, O |
@@ -64,6 +72,7 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
 - `js/world.js` : génération du monde, relief, biomes, décor, drapeaux, exploitations
 - `js/towns.js` : villes, bâtiments, murs, cellules, coffres
 - `js/prison.js` : défaite, capture, prison, crochetage, port des corps, primes, soins
+- `js/fx.js` : sons, particules, tremblement, pause à l'impact
 - `js/units.js` : personnages, équipement, combat, IA
 - `js/strategy.js` : groupes, guerres, événements mondiaux
 - `js/economy.js` : stocks, prix, caravanes marchandes, civils

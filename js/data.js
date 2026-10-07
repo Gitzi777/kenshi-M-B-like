@@ -306,7 +306,11 @@ const INN_A = ['Chameau', 'Scorpion', 'Puits', 'Vautour', 'Lézard', 'Tonneau', 
 const INN_B = ['Borgne', 'Rouge', 'Sec', 'Ivre', 'Doré', 'Fêlé', 'Joyeux', 'Brûlé', 'Perdu', 'Tranquille'];
 
 // ---------- Compétences et artisanat ----------
-const SKILLS = { forge: 'Forge', couture: 'Couture', bois: 'Menuiserie', recolte: 'Récolte', crochetage: 'Crochetage' };
+const CRAFT_SKILLS = { forge: 'Forge', couture: 'Couture', bois: 'Menuiserie', recolte: 'Récolte', crochetage: 'Crochetage' };
+// compétences de combat façon Kenshi : elles montent en s'en servant, jusqu'à 100
+const COMBAT_SKILLS = { attaque: 'Attaque', defense: 'Défense', poings: 'Poings', arc: 'Tir', force: 'Force',
+  endurance: 'Endurance', athletisme: 'Athlétisme', soins: 'Soins' };
+const SKILLS = { ...COMBAT_SKILLS, ...CRAFT_SKILLS };
 const SKILL_TITLES = { forge: 'Forgeron', couture: 'Tailleur', bois: 'Menuisier', recolte: 'Récolteur', crochetage: 'Voleur' };
 const STATIONS = {
   forge:    { name: 'Forge',     skill: 'forge',   mats: ['iron'] },
@@ -345,7 +349,7 @@ function rollQuality(skill) {
 }
 function metier(u) {
   let best = null;
-  for (const k in SKILLS) if ((u.skills[k] || 0) >= 20 && (!best || u.skills[k] > u.skills[best])) best = k;
+  for (const k in CRAFT_SKILLS) if ((u.skills[k] || 0) >= 20 && (!best || u.skills[k] > u.skills[best])) best = k;
   return best ? SKILL_TITLES[best] : null;
 }
 

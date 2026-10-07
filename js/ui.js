@@ -4,12 +4,13 @@
 const $ = id => document.getElementById(id);
 
 // ---------- Réglages ----------
-const settings = { sens: 1, invertY: false, directional: false, smooth: true, camMode: 'suivie', hitNeutrals: false };
+const settings = { sens: 1, invertY: false, directional: false, smooth: true, camMode: 'suivie', hitNeutrals: false, volume: 0.7 };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (err) { /* réglages par défaut */ }
 function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (err) { /* ignoré */ } }
 
 // ---------- Messages ----------
 function logMsg(text, kind = '') {
+  if (typeof sfx === 'function' && /💰/.test(text) && kind !== 'warn') sfx('coin', null, 0.7);
   const log = $('log');
   const d = document.createElement('div');
   d.textContent = text;
@@ -290,7 +291,7 @@ function renderTown() {
     body = `<div class="note">Les mercenaires te suivent, se battent, travaillent dans tes exploitations, et tu peux prendre leur contrôle (C).</div>
       ${state.recruits && state.recruits.town === s.name ? '' : rollRecruits(s)}
       <div class="items">${state.recruits.list.map((r, i) => `<div class="item"><span><b>${esc(r.name)}</b>
-        <small>❤ ${r.maxHp} · force ${r.str}${Object.entries(r.skills).filter(([, v]) => v >= 10).map(([k, v]) => ` · ${SKILLS[k]} ${v}`).join('')}</small></span>
+        <small>❤ ${r.maxHp} · Attaque ${r.skills.attaque} · Défense ${r.skills.defense}${Object.entries(r.skills).filter(([k, v]) => CRAFT_SKILLS[k] && v >= 10).map(([k, v]) => ` · ${SKILLS[k]} ${v}`).join('')}</small></span>
         <button data-recruit="${i}" ${state.money < cost || full ? 'disabled' : ''}>Engager (${cost} 💰)</button></div>`).join('') || '<small>Plus personne à engager aujourd\'hui.</small>'}</div>
       <button data-rest ${state.money < 10 ? 'disabled' : ''}>Louer des lits jusqu'au matin, tout le monde soigné (10 💰)</button>
       <h4>On raconte que…</h4><ul class="rumors">${rumors || '<li>Rien de neuf.</li>'}</ul>`;
@@ -332,9 +333,10 @@ function rollRecruits(s) {
   const list = [];
   for (let i = 0; i < randInt(2, 4); i++) {
     const skills = { forge: 0, couture: 0, bois: 0, recolte: 0, crochetage: 0 };
-    const k = pick(Object.keys(SKILLS));
+    const k = pick(Object.keys(CRAFT_SKILLS));
     skills[k] = randInt(10, 40);
-    if (Math.random() < 0.4) skills[pick(Object.keys(SKILLS))] += randInt(5, 20);
+    if (Math.random() < 0.4) skills[pick(Object.keys(CRAFT_SKILLS))] += randInt(5, 20);
+    Object.assign(skills, baseCombat(randInt(5, 30)));
     const tier = Math.random();
     list.push({ name: genPerson(), maxHp: randInt(70, 105), str: randInt(2, 5), skills,
       equip: tier < 0.5 ? { weapon: 'machette', armor: 'tunique', helmet: 'capuche' }
@@ -642,7 +644,9 @@ function renderInventory() {
     <div class="pbody two">
       <div><h4>${esc(u.name)}</h4>
         <div class="statline">❤ ${Math.ceil(u.hp)}/${u.maxHp} · ⚔ ${damageOf(u)} · 🛡 ${armorOf(u)} · 🏃 ${speedOf(u).toFixed(1)} · niv ${u.level}</div>
-        <div class="statline">${Object.entries(SKILLS).map(([k, n]) => `${n} <b>${Math.floor(u.skills[k] || 0)}</b>`).join(' · ')}${metier(u) ? ` · Métier : <b>${metier(u)}</b>` : ''}</div>
+        <div class="skillgrid">${Object.entries(SKILLS).map(([k, n]) => `<div class="sk${COMBAT_SKILLS[k] ? ' cb' : ''}"><span>${n}</span><b>${Math.floor(u.skills[k] || 0)}</b><i style="width:${Math.min(100, u.skills[k] || 0)}%"></i></div>`).join('')}</div>
+        ${metier(u) ? `<div class="statline">Métier : <b>${metier(u)}</b></div>` : ''}
+        <small class="note">Les compétences montent en s'en servant, jusqu'à 100 : se battre, encaisser, parer, courir, soigner, fabriquer…</small>
         ${u.isPlayer ? '<small class="note">Personnage contrôlé</small>' : `<button data-control="${u.id}">Prendre le contrôle</button>`}
         <div class="items">${slots}</div></div>
       <div><h4>Sac commun <small>${Math.round(weightUsed())}/${weightMax()} kg${overloaded() ? ' — surchargé, vous ralentissez !' : ''}</small></h4>
@@ -900,6 +904,7 @@ function renderSettings() {
       <label class="row">Sensibilité de la souris <input id="sSens" type="range" min="0.2" max="2.5" step="0.05" value="${settings.sens}"> <b id="sSensV">${settings.sens.toFixed(2)}</b></label>
       <label class="row"><input id="sInv" type="checkbox" ${settings.invertY ? 'checked' : ''}> Inverser l'axe vertical</label>
       <label class="row"><input id="sSmooth" type="checkbox" ${settings.smooth ? 'checked' : ''}> Caméra lissée</label>
+      <label class="row">Volume <input id="sVol" type="range" min="0" max="1" step="0.05" value="${settings.volume}"></label>
       <label class="row"><input id="sHit" type="checkbox" ${settings.hitNeutrals ? 'checked' : ''}> Frapper les neutres et alliés (sinon tes coups et flèches ne touchent que tes ennemis)</label>
       <label class="row"><input id="sTank" type="checkbox" ${settings.tank !== false ? 'checked' : ''}> Vue suivie : Q et D font tourner le personnage, la caméra reste derrière lui (conseillé sur Mac)</label>
       <label class="row">Caméra (touche V pour changer)
@@ -919,6 +924,7 @@ $('settings').addEventListener('input', e => {
   if (e.target.id === 'sSmooth') settings.smooth = e.target.checked;
   if (e.target.id === 'sTank') settings.tank = e.target.checked;
   if (e.target.id === 'sHit') settings.hitNeutrals = e.target.checked;
+  if (e.target.id === 'sVol') setVolume(Number(e.target.value));
   if (e.target.id === 'sCam') setCamMode(e.target.value);
   saveSettings();
 });
@@ -1117,3 +1123,6 @@ $('mapBtn').addEventListener('click', () => togglePanel('map'));
 $('invBtn').addEventListener('click', () => togglePanel('inv'));
 $('setBtn').addEventListener('click', () => togglePanel('settings'));
 $('cSettings').addEventListener('click', () => { openPanel('settings'); });
+
+// petit clic sur chaque bouton de l'interface
+document.addEventListener('click', e => { if (e.target.closest('button')) sfx('click', null, 0.5); });

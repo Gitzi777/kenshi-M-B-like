@@ -421,7 +421,8 @@ function generateWorld(seed, keepFactions = null) {
   for (const f of facs) { state.factions[f.id] = f; state.rep[f.id] = f.bandit && f.behavior !== 'racket' ? -100 : 0; }
   const majors = facs.filter(f => !f.bandit);
   for (const a of majors) for (const b of majors) if (a.id < b.id) state.relations[relKey(a.id, b.id)] = 'peace';
-  for (let i = 0; i < 1 + Math.floor(rng() * 2); i++) {
+  // au départ : au plus une guerre
+  if (rng() < 0.5) {
     const a = rpick(rng, majors), b = rpick(rng, majors);
     if (a !== b) { state.relations[relKey(a.id, b.id)] = 'war'; state.warSince[relKey(a.id, b.id)] = 0; }
   }
