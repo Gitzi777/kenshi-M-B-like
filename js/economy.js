@@ -162,7 +162,8 @@ function spawnTownCivilians(s) {
   if (s.type === 'repaire') return;
   for (const v of s.services) {
     if (v.type === 'marche') continue;
-    const u = makeCivilian(s.faction, v.x, v.z, { type: 'stall', x: v.x, z: v.z, yaw: v.yaw, town: s.name, timer: 999 }, SERVICE_KEEPER[v.type]);
+    const kx = v.kx != null ? v.kx : v.x, kz = v.kz != null ? v.kz : v.z;
+    const u = makeCivilian(s.faction, kx, kz, { type: 'stall', x: kx, z: kz, yaw: v.yaw, town: s.name, timer: 999 }, SERVICE_KEEPER[v.type]);
     u.name = v.keeper;
     s.civilians.push(u);
   }
@@ -171,7 +172,8 @@ function spawnTownCivilians(s) {
   }
   for (let i = 0; i < 5; i++) {
     const a = rand(0, Math.PI * 2), r = rand(6, s.r - 8);
-    s.civilians.push(makeCivilian(s.faction, s.x + Math.cos(a) * r, s.z + Math.sin(a) * r, { type: 'wander', town: s.name, wait: rand(0, 3) }, 'Habitant'));
+    const home = s.homes && s.homes.length ? s.homes[i % s.homes.length] : null;
+    s.civilians.push(makeCivilian(s.faction, s.x + Math.cos(a) * r, s.z + Math.sin(a) * r, { type: 'wander', town: s.name, wait: rand(0, 3), home }, 'Habitant'));
   }
 }
 function despawnTownCivilians(s) {
@@ -232,12 +234,19 @@ function updateCivil(u, dt) {
   } else if (t.type === 'wander') {
     const s = settlementByName(t.town);
     if (!s) return;
+    // la nuit, les habitants rentrent chez eux
+    if (t.home && isNight()) {
+      if (u.hidden) return;
+      if (steer(u, t.home.door.x, t.home.door.z, dt, 0.6, 0.8)) { u.hidden = true; u.c.root.visible = false; }
+      return;
+    }
+    if (u.hidden) { u.hidden = false; u.c.root.visible = true; }
     if (!t.dest) {
       t.wait -= dt;
       u.moving = 0;
       if (t.wait > 0) return;
       if (Math.random() < 0.4 && s.stalls.length) { const st = pick(s.stalls); t.dest = { x: st.x + rand(-1, 1) - Math.sin(st.yaw) * -1.2, z: st.z + rand(-1, 1) }; t.shop = true; }
-      else { const a = rand(0, Math.PI * 2), r = rand(4, s.r - 8); t.dest = { x: s.x + Math.cos(a) * r, z: s.z + Math.sin(a) * r }; t.shop = false; }
+      else { const a = rand(0, Math.PI * 2), r = rand(4, Math.min(13, s.r - 8)); t.dest = { x: s.x + Math.cos(a) * r, z: s.z + Math.sin(a) * r }; t.shop = false; }
     }
     if (steer(u, t.dest.x, t.dest.z, dt, 0.55, 1.2)) {
       if (t.shop) {

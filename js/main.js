@@ -5,6 +5,10 @@
 const keys = {};
 const cam = { yaw: 0, pitch: 0.3, dist: 6, sy: 0, sp: 0.3, sd: 6, tx: 0, ty: 0, tz: 0, init: false };
 const rts = { x: 0, z: 0, yaw: 0, pitch: 0.95, dist: 40, sx: 0, sz: 0, sdist: 40, init: false };
+const fol = { yaw: 0, pitch: 0.62, dist: 10, sy: 0, sp: 0.62, sd: 10, tx: 0, ty: 0, tz: 0, init: false };
+const mouse = { x: window.innerWidth / 2, y: window.innerHeight / 2, ground: null };
+renderer.domElement.tabIndex = 0;
+renderer.domElement.style.outline = 'none';
 let locked = false, rightHeld = false, midDrag = null, boxSel = null;
 let mouseDir = 'haut';
 const dirAcc = { x: 0, y: 0 };
@@ -13,11 +17,19 @@ state.run = false;
 
 const canvasEl = renderer.domElement;
 const isRTS = () => settings.camMode === 'rts';
+const isFollow = () => settings.camMode === 'suivie';
+function refocus() { try { canvasEl.focus({ preventScroll: true }); } catch (err) { /* rien */ } }
 
 function setCamMode(mode) {
   settings.camMode = mode;
   saveSettings();
-  if (mode === 'rts') {
+  if (mode !== 'tps' && document.pointerLockElement) document.exitPointerLock();
+  if (mode === 'suivie') {
+    state.selected = [];
+    fol.yaw = player.yaw; fol.init = false;
+    player.cmd = null;
+    logMsg('🎥 Vue suivie : ZQSD bouger · ← → tourner la caméra · molette zoom · R dégainer · clic frapper vers le curseur.');
+  } else if (mode === 'rts') {
     if (document.pointerLockElement) document.exitPointerLock();
     rts.x = player.pos.x; rts.z = player.pos.z; rts.yaw = cam.yaw; rts.init = false;
     state.selected = [player];
@@ -26,14 +38,23 @@ function setCamMode(mode) {
     state.selected = [];
     cam.yaw = player.yaw; cam.init = false;
     player.cmd = null;
-    logMsg('🎥 Vue à la 3e personne.');
+    logMsg('🎥 Vue épaule : clique pour capturer la souris, Échap pour la libérer.');
   }
   updateRings();
 }
 
 canvasEl.addEventListener('contextmenu', e => e.preventDefault());
 canvasEl.addEventListener('mousedown', e => {
+  const hadFocus = document.hasFocus() && document.activeElement === canvasEl;
+  refocus();
   if (state.mode !== 'play' || state.panel || state.ko > 0) return;
+  if (isFollow()) {
+    if (e.button === 1) { midDrag = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
+    if (!hadFocus && e.button === 0) return; // le premier clic sert seulement à reprendre la main
+    if (e.button === 0) playerPrimary();
+    if (e.button === 2 && !player.sheathed) rightHeld = true;
+    return;
+  }
   if (isRTS()) {
     if (e.button === 1) { midDrag = { x: e.clientX, y: e.clientY }; e.preventDefault(); }
     if (e.button === 0) boxSel = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, shift: e.shiftKey };
@@ -41,16 +62,27 @@ canvasEl.addEventListener('mousedown', e => {
     return;
   }
   if (!locked) {
+    // vue épaule : le premier clic capture la souris, il ne frappe pas
     try { const p = canvasEl.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (err) { /* facultatif */ }
+    return;
   }
-  if (e.button === 0) {
-    if (player.mode === 'bow') {
-      if (state.goods.arrows > 0) player.draw = 0;
-      else logMsg('Plus de flèches ! Achètes-en au marché ou fabrique-en chez le menuisier.', 'warn');
-    } else startAttack(player, mouseDir);
-  }
-  if (e.button === 2) rightHeld = true;
+  if (e.button === 0) playerPrimary();
+  if (e.button === 2 && !player.sheathed) rightHeld = true;
 });
+function playerPrimary() {
+  if (player.jailed || player.carrying) return;
+  if (player.sheathed) {
+    if ((state.clock || 0) - (state.sheathHint || -99) > 8) { state.sheathHint = state.clock || 0; logMsg('Ton arme est rangée : appuie sur R pour dégainer.'); }
+    return;
+  }
+  if (player.mode === 'bow') {
+    if (state.goods.arrows > 0) player.draw = 0;
+    else logMsg('Plus de flèches ! Achètes-en au bazar ou fabrique-en chez le menuisier.', 'warn');
+  } else {
+    if (isFollow() && mouse.ground) player.yaw = Math.atan2(mouse.ground.x - player.pos.x, mouse.ground.z - player.pos.z);
+    startAttack(player, mouseDir);
+  }
+}
 window.addEventListener('mouseup', e => {
   if (e.button === 2) rightHeld = false;
   if (e.button === 1) midDrag = null;
@@ -59,7 +91,16 @@ window.addEventListener('mouseup', e => {
 });
 document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === canvasEl; });
 window.addEventListener('mousemove', e => {
+  mouse.x = e.clientX; mouse.y = e.clientY;
   if (state.mode !== 'play' || state.panel) return;
+  if (isFollow()) {
+    if (midDrag) {
+      fol.yaw -= (e.clientX - midDrag.x) * 0.006 * settings.sens;
+      fol.pitch = clamp(fol.pitch + (e.clientY - midDrag.y) * 0.004 * settings.sens * (settings.invertY ? -1 : 1), 0.2, 1.35);
+      midDrag = { x: e.clientX, y: e.clientY };
+    }
+    return;
+  }
   if (isRTS()) {
     if (midDrag) {
       rts.yaw -= (e.clientX - midDrag.x) * 0.006;
@@ -91,7 +132,8 @@ window.addEventListener('mousemove', e => {
 });
 canvasEl.addEventListener('wheel', e => {
   e.preventDefault();
-  if (isRTS()) rts.dist = clamp(rts.dist * (e.deltaY > 0 ? 1.12 : 0.89), 8, 160);
+  if (isFollow()) fol.dist = clamp(fol.dist * (e.deltaY > 0 ? 1.1 : 0.9), 3.5, 40);
+  else if (isRTS()) rts.dist = clamp(rts.dist * (e.deltaY > 0 ? 1.12 : 0.89), 8, 160);
   else cam.dist = clamp(cam.dist * (e.deltaY > 0 ? 1.1 : 0.9), 2.5, 18);
 }, { passive: false });
 
@@ -130,15 +172,21 @@ window.addEventListener('keydown', e => {
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
   if (state.mode !== 'play') return;
   const k = e.key.toLowerCase();
-  if (k === 'escape') { closePanel(); return; }
+  if (k === 'escape') { closePanel(); refocus(); return; }
   if (state.ko > 0) return;
   if (k === 'o') { togglePanel('settings'); return; }
   if (k === 'm') togglePanel('map');
   else if (k === 'i' || e.code === 'Tab') togglePanel('inv');
   else if (k === 'e') {
-    if (state.panel === 'town' || state.panel === 'node') closePanel();
-    else if (!state.panel && state.currentService) openBuilding(state.currentTown, state.currentService);
-    else if (!state.panel && state.currentNode) openPanel('node');
+    if (state.panel === 'town' || state.panel === 'node' || state.panel === 'lock') { closePanel(); refocus(); }
+    else if (!state.panel) {
+      const lk = lockTargetNear(player.pos);
+      if (player.carrying && state.currentService && state.currentService.type === 'prison') openBuilding(state.currentTown, state.currentService);
+      else if (lk && (player.jailed || !state.currentService)) { state.lockTarget = lk; openPanel('lock'); }
+      else if (state.currentService && !player.jailed) openBuilding(state.currentTown, state.currentService);
+      else if (lk) { state.lockTarget = lk; openPanel('lock'); }
+      else if (state.currentNode) openPanel('node');
+    }
   } else if (k === 'f' && !state.panel) {
     const c = nearCorpse();
     if (c) { state.lootTarget = c; openPanel('loot'); }
@@ -146,7 +194,13 @@ window.addEventListener('keydown', e => {
   else if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) {
     state.run = !state.run;
     logMsg(state.run ? '🏃 Course activée (Maj pour marcher).' : '🚶 Marche.');
-  } else if (k === 'v') setCamMode(isRTS() ? 'tps' : 'rts');
+  }
+  else if (k === 'v') setCamMode({ suivie: 'rts', rts: 'tps', tps: 'suivie' }[settings.camMode] || 'suivie');
+  else if (k === 'r') {
+    setSheathed(player, !player.sheathed);
+    logMsg(player.sheathed ? 'Tu ranges ton arme.' : 'Tu dégaines.');
+  } else if (k === 'g') { if (player.carrying) { dropCarried(player); logMsg('Tu poses ton fardeau.'); } else pickUpNear(); }
+  else if (k === 'h') useKit();
   else if (k === 'c') cycleControl();
   else if (k === 'x') {
     if (bowOf(player)) { setMode(player, player.mode === 'bow' ? 'melee' : 'bow'); logMsg(player.mode === 'bow' ? 'Arc en main.' : 'Arme de mêlée en main.'); }
@@ -155,6 +209,7 @@ window.addEventListener('keydown', e => {
     state.timeScale = state.timeScale > 1 ? 1 : 4;
     logMsg(state.timeScale > 1 ? '⏩ Le temps passe plus vite (T pour revenir).' : 'Vitesse normale.');
   } else if (e.code === 'Space' && isRTS()) { rts.x = player.pos.x; rts.z = player.pos.z; }
+  else if (e.code === 'Space' && isFollow()) { fol.yaw = player.yaw; }
   else if (/^Digit[1-5]$/.test(e.code)) {
     const n = Number(e.code.slice(5));
     if (n === 5) attackMyTarget();
@@ -163,6 +218,7 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; rightHeld = false; midDrag = null; });
+document.addEventListener('click', e => { if (state.mode === 'play' && !state.panel && !e.target.closest('input,select,textarea')) refocus(); });
 
 // ---------- Vue tactique : sélection et ordres ----------
 const raycaster = new T.Raycaster();
@@ -171,7 +227,7 @@ function screenToGround(sx, sy) {
   raycaster.setFromCamera(ndc, camera);
   const o = raycaster.ray.origin, d = raycaster.ray.direction;
   let t = 0;
-  for (let i = 0; i < 800; i++) {
+  for (let i = 0; i < 400; i++) {
     t += 1;
     const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t;
     if (y < heightAt(x, z)) {
@@ -262,6 +318,16 @@ function releaseArrow() {
   player.draw = -1;
   if (!bow || state.goods.arrows <= 0 || draw < 0.15) return;
   const power = clamp(draw / (bow.draw * (1 - player.agi * 0.03)), 0.3, 1);
+  if (isFollow()) {
+    const foe = unitUnder(mouse.x, mouse.y, u => alive(u) && !isPlayerSide(u));
+    const tp = foe ? new T.Vector3(foe.pos.x, foe.pos.y + 1.1, foe.pos.z) : mouse.ground ? new T.Vector3(mouse.ground.x, heightAt(mouse.ground.x, mouse.ground.z) + 1, mouse.ground.z) : null;
+    if (!tp) return;
+    const from = new T.Vector3(player.pos.x, player.pos.y + 1.5, player.pos.z);
+    const aim = aimVelocity(from, tp, 30 + 25 * power);
+    fireArrow(player, from, aim.dir, aim.speed, (bow.dmg + player.str * 0.3) * (0.4 + 0.6 * power));
+    state.goods.arrows--;
+    return;
+  }
   camera.getWorldDirection(_dir);
   const o = camera.position;
   let t = bow.range;
@@ -294,11 +360,13 @@ function updatePlayer(dt) {
     player.block = null;
     return;
   }
-  const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
-  const s = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
-  player.block = rightHeld && player.mode === 'melee' && !player.atk ? { dir: mouseDir } : null;
+  const follow = isFollow();
+  const f = (keys.KeyW || (!follow && keys.ArrowUp) ? 1 : 0) - (keys.KeyS || (!follow && keys.ArrowDown) ? 1 : 0);
+  const s = (keys.KeyD || (!follow && keys.ArrowRight) ? 1 : 0) - (keys.KeyA || (!follow && keys.ArrowLeft) ? 1 : 0);
+  player.block = rightHeld && player.mode === 'melee' && !player.atk && !player.sheathed ? { dir: mouseDir } : null;
   if (player.draw >= 0) player.draw += dt;
-  const fx = Math.sin(cam.yaw), fz = Math.cos(cam.yaw);
+  const viewYaw = follow ? fol.yaw : cam.yaw;
+  const fx = Math.sin(viewYaw), fz = Math.cos(viewYaw);
   let mx = fx * f - fz * s, mz = fz * f + fx * s;
   const len = Math.hypot(mx, mz);
   if (len > 0) player.cmd = null;
@@ -314,23 +382,31 @@ function updatePlayer(dt) {
   }
   player.working = false;
   const combat = player.block || player.atk || player.draw >= 0;
+  // vue suivie, arme dégainée : le personnage regarde vers le curseur
+  const aimYaw = follow && !player.sheathed && mouse.ground ? Math.atan2(mouse.ground.x - player.pos.x, mouse.ground.z - player.pos.z) : null;
   if (len > 0) {
     mx /= len; mz /= len;
-    const mul = combat ? 0.5 : state.run ? 1.6 : 1;
+    const mul = (combat ? 0.5 : state.run ? 1.6 : 1) * (player.carrying ? 0.65 : 1);
     player.pos.x += mx * speedOf(player) * mul * dt;
     player.pos.z += mz * speedOf(player) * mul * dt;
     player.moving = mul;
-    if (!combat) player.yaw = turnToward(player.yaw, Math.atan2(mx, mz), dt * 12);
+    if (!combat && aimYaw == null) player.yaw = turnToward(player.yaw, Math.atan2(mx, mz), dt * 12);
+    // la caméra se replace doucement derrière toi quand tu avances
+    if (follow && f > 0 && s === 0 && player.sheathed) fol.yaw = turnToward(fol.yaw, player.yaw, dt * 1.6);
   } else if (!player.cmd) player.moving = 0;
-  if (combat) player.yaw = turnToward(player.yaw, cam.yaw, dt * 14);
+  if (aimYaw != null) player.yaw = turnToward(player.yaw, aimYaw, dt * 14);
+  else if (combat && !follow) player.yaw = turnToward(player.yaw, cam.yaw, dt * 14);
 }
 
 // ---------- Boucle de jeu ----------
 function update(dt) {
   if (state.ko > 0) {
     state.ko -= dt;
-    if (state.ko <= 0) wakeUp();
+    if (state.ko <= 0) $('ko').classList.add('hidden');
   } else updatePlayer(dt);
+  updatePicking(dt);
+  updateCarry();
+  updateJail(dt);
   updateUnits(dt);
   updateArrows(dt);
   updateWorld(dt);
@@ -339,9 +415,9 @@ function update(dt) {
 
   // soins
   for (const u of team()) {
-    if (u.down > 0 || state.ko > 0) continue;
+    if (u.down > 0) continue;
     const s = settlementAt(u.pos);
-    const regen = s && !playerHostileTo(s.faction) ? 3 : (state.goods.food > 0 ? 0.3 : 0);
+    const regen = s && !playerHostileTo(s.faction) && !u.jailed ? 3 : (state.goods.food > 0 ? 0.3 : 0);
     const before = Math.ceil(u.hp);
     u.hp = Math.min(u.maxHp, u.hp + regen * dt);
     if (Math.ceil(u.hp) !== before) drawBar(u);
@@ -371,7 +447,7 @@ function update(dt) {
     if (town) logMsg(town.type === 'repaire' ? `⚠ Tu entres dans le repaire ${F(town.faction).of} !` : `Tu entres à ${town.name} (${F(town.faction).name}). Approche-toi d'un bâtiment et appuie sur E.`);
   }
 
-  if (state.timeScale > 1 && units.some(u => alive(u) && hostile(player, u) && d2(u.pos, player.pos) < 50)) {
+  if (state.timeScale > 1 && !player.jailed && units.some(u => alive(u) && hostile(player, u) && d2(u.pos, player.pos) < 50)) {
     state.timeScale = 1;
     logMsg('⚠ Danger à proximité : le temps reprend son cours normal.', 'warn');
   }
@@ -392,6 +468,38 @@ function updateCamera(dt) {
     const p = player.pos;
     camera.position.set(p.x + Math.sin(cam.yaw) * 4, p.y + 1.8, p.z + Math.cos(cam.yaw) * 4);
     camera.lookAt(p.x, p.y + 1.1, p.z);
+    return;
+  }
+  if (isFollow()) {
+    if (keys.ArrowLeft) fol.yaw += dt * 1.8;
+    if (keys.ArrowRight) fol.yaw -= dt * 1.8;
+    if (keys.ArrowUp) fol.pitch = clamp(fol.pitch + dt, 0.2, 1.35);
+    if (keys.ArrowDown) fol.pitch = clamp(fol.pitch - dt, 0.2, 1.35);
+    const k = 1 - Math.exp(-dt * 10);
+    if (!fol.init) { fol.sy = fol.yaw; fol.sp = fol.pitch; fol.sd = fol.dist; fol.tx = player.pos.x; fol.ty = player.pos.y; fol.tz = player.pos.z; fol.init = true; }
+    const indoor = state.settlements.some(s => s.buildings && s.buildings.some(b => d2(b.c, player.pos) < 9 && insideBuilding(b, player.pos)));
+    // à l'intérieur, la caméra passe au-dessus pour voir la pièce
+    const wantPitch = indoor ? Math.max(fol.pitch, 1.1) : fol.pitch;
+    fol.sy += angleDiff(fol.sy, fol.yaw) * k; fol.sp += (wantPitch - fol.sp) * k;
+    fol.tx += (player.pos.x - fol.tx) * k; fol.ty += (player.pos.y - fol.ty) * k; fol.tz += (player.pos.z - fol.tz) * k;
+    const target = _from.set(fol.tx, fol.ty + 1.4, fol.tz);
+    const cp = Math.cos(fol.sp);
+    _to.set(-Math.sin(fol.sy) * cp, Math.sin(fol.sp), -Math.cos(fol.sy) * cp);
+    let dist = fol.dist;
+    if (!indoor) {
+      const blockers = cameraBlockers();
+      if (blockers.length) {
+        raycaster.set(target, _to); raycaster.far = dist;
+        const hit = raycaster.intersectObjects(blockers, false)[0];
+        if (hit) dist = Math.max(2, hit.distance - 0.4);
+      }
+    }
+    fol.sd = dist < fol.sd ? dist : fol.sd + (dist - fol.sd) * k;
+    const x = target.x + _to.x * fol.sd, z = target.z + _to.z * fol.sd;
+    camera.position.set(x, Math.max(target.y + _to.y * fol.sd, heightAt(x, z) + 0.8), z);
+    camera.lookAt(target);
+    cam.yaw = fol.yaw;
+    mouse.ground = screenToGround(mouse.x, mouse.y);
     return;
   }
   if (isRTS()) {
@@ -497,6 +605,7 @@ function loop(now) {
   updateCamera(dt);
   updateSky();
   waveFlags(now / 1000);
+  updateRoofs();
   renderer.render(scene, camera);
   updateFloats(dt);
   if (state.mode === 'play') {

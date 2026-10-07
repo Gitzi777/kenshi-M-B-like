@@ -227,11 +227,16 @@ function spawnGuards(s) {
   const n = Math.min(s.garrison, 6);
   for (let i = 0; i < n; i++) addGuard(s, i);
   // le souverain réside au palais de sa capitale
-  const palace = s.services && s.services.find(v => v.type === 'palais');
   const fac = F(s.faction);
-  if (palace && !fac.bandit) {
-    const u = makeTroop(s.faction, 'general', palace.x, palace.z, { guardOf: s, name: fac.leader, title: '', rank: 'ruler', banner: true });
-    u.home = { x: palace.x, z: palace.z, yaw: palace.yaw };
+  if (s.throne && !fac.bandit) {
+    const u = makeTroop(s.faction, 'general', s.throne.x, s.throne.z, { guardOf: s, name: fac.leader, title: '', rank: 'ruler' });
+    u.home = { x: s.throne.x, z: s.throne.z, yaw: s.buildings.find(b => b.hw === 7) ? s.buildings.find(b => b.hw === 7).yaw : 0 };
+    s.guards.push(u);
+  }
+  // un gardien veille dans la prison
+  if (s.prisonGuard && n > 0) {
+    const u = makeTroop(s.faction, fac.bandit ? 'pillard' : 'veteran', s.prisonGuard.x, s.prisonGuard.z, { guardOf: s, title: 'Gardien' });
+    u.home = { x: s.prisonGuard.x, z: s.prisonGuard.z, yaw: 0 };
     s.guards.push(u);
   }
 }

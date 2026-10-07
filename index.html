@@ -61,10 +61,10 @@
     <div id="log"></div>
     <canvas id="minimap" width="180" height="180"></canvas>
     <div id="controls" class="panel">
-      <b>ZQSD</b> bouger · <b>Maj</b> courir / marcher · <b>Souris</b> caméra · <b>Molette</b> zoom<br>
-      <b>Clic</b> frapper · <b>Clic droit</b> parer · <b>X</b> arc / mêlée<br>
-      <b>E</b> bâtiment / exploitation · <b>F</b> fouiller · <b>I</b> inventaire · <b>M</b> carte<br>
-      <b>V</b> vue tactique · <b>C</b> changer de perso · <b>T</b> temps · <b>O</b> réglages
+      <b>ZQSD</b> bouger · <b>Maj</b> courir / marcher · <b>← →</b> tourner la caméra · <b>Molette</b> zoom<br>
+      <b>R</b> dégainer / ranger · <b>Clic</b> frapper vers le curseur · <b>Clic droit</b> parer · <b>X</b> arc<br>
+      <b>E</b> parler, entrer, crocheter · <b>F</b> fouiller · <b>G</b> porter · <b>H</b> soigner · <b>I</b> inventaire · <b>M</b> carte<br>
+      <b>V</b> changer de caméra · <b>C</b> changer de perso · <b>T</b> temps · <b>O</b> réglages
     </div>
     <div id="dirInd"><span class="d-haut">▲</span><span class="d-gauche">◀</span><span class="d-droite">▶</span><span class="d-estoc">▼</span><i>+</i></div>
     <div id="threat"></div>
@@ -78,17 +78,20 @@
   <div id="worldmap" class="hidden"></div>
   <div id="nodepanel" class="panel big-panel hidden"></div>
   <div id="settings" class="panel big-panel hidden"></div>
-  <div id="ko" class="hidden"><h1>K.O.</h1><p id="koText"></p></div>
+  <div id="lockpanel" class="panel big-panel hidden"></div>
+  <div id="ko" class="hidden"><h1 id="koTitle">K.O.</h1><p id="koText"></p></div>
   <div id="floats"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="js/data.js"></script>
   <script src="js/world.js"></script>
+  <script src="js/towns.js"></script>
   <script src="js/units.js"></script>
   <script src="js/strategy.js"></script>
   <script src="js/economy.js"></script>
   <script src="js/wildlife.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/prison.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

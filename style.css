@@ -172,3 +172,7 @@ label.row input[type=range] { flex: 1; }
 .member.sel { background: rgba(125, 255, 125, .12); }
 .row button.on { background: #9a5a22; border-color: #ffcf7a; }
 #log { bottom: 44px; }
+
+#view canvas { cursor: default; }
+#ko button.big { width: auto; padding: 10px 24px; }
+select { background: #2a2117; color: #fff; border: 1px solid #6b5536; border-radius: 4px; padding: 4px; max-width: 100%; }

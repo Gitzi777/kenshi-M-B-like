@@ -12,8 +12,8 @@ const CARRY_PER_MEMBER = 20;
 const MAX_SQUAD = 8;
 const SPAWN_DIST = 120;          // un groupe apparaît en 3D à moins de 120 m
 const DESPAWN_DIST = 170;
-const SAVE_KEY = 'terres-arides-save-v2';
-const SETTINGS_KEY = 'terres-arides-settings';
+const SAVE_KEY = 'terres-arides-save-v3';
+const SETTINGS_KEY = 'terres-arides-settings-v2';
 
 // ---------- Utilitaires ----------
 function mulberry32(a) {
@@ -75,6 +75,8 @@ const GOODS = {
   spices: { name: 'Épices',   icon: '🌶️', base: 40, w: 1 },
   salt:   { name: 'Sel',      icon: '🧂', base: 14, w: 1 },
   arrows: { name: 'Flèches',  icon: '🏹', base: 1,  w: 0 },
+  picks:  { name: 'Crochets', icon: '🗝', base: 6,  w: 0 },
+  kits:   { name: 'Trousses de soins', icon: '🩹', base: 25, w: 0 },
 };
 const TRADE_GOODS = ['food', 'wood', 'iron', 'cloth', 'leather', 'spices', 'salt'];
 // consommation par jour pour 100 habitants
@@ -278,8 +280,10 @@ const ORIGINS = [
     goods: { food: 3, arrows: 30 }, equip: { weapon: 'dague', bow: 'arc_court', armor: 'tunique', helmet: 'capuche' }, bonus: { A: 1 }, skills: { bois: 20, recolte: 15 } },
   { id: 'forgeron', name: 'Apprenti forgeron', desc: '100 💰, 8 fer, compétence de forge 30.', money: 100,
     goods: { food: 3, iron: 8 }, equip: { weapon: 'machette', armor: 'tunique' }, bonus: {}, skills: { forge: 30 } },
-  { id: 'esclave', name: 'Esclave évadé', desc: '+2 Agilité. Des haillons, pas une pièce.', money: 0,
-    goods: { food: 1 }, equip: { armor: 'haillons' }, bonus: { A: 2 } },
+  { id: 'voleur', name: 'Voleur', desc: '60 💰, 6 crochets, crochetage 30. Une dague.', money: 60,
+    goods: { food: 2, picks: 6 }, equip: { weapon: 'dague', armor: 'tunique', helmet: 'capuche' }, bonus: { A: 1 }, skills: { crochetage: 30 } },
+  { id: 'esclave', name: 'Esclave évadé', desc: '+2 Agilité, crochetage 15. Des haillons, pas une pièce.', money: 0,
+    goods: { food: 1, picks: 2 }, equip: { armor: 'haillons' }, bonus: { A: 2 }, skills: { crochetage: 15 } },
 ];
 const BODY_COLORS = ['#7a5a3a', '#3d5a7a', '#7a2e2e', '#4a6b3a', '#c9b48a', '#3a3a3a'];
 const SKIN_COLORS = ['#f1c9a5', '#d9a47a', '#a8714a', '#6e4428', '#3f2615'];
@@ -302,8 +306,8 @@ const INN_A = ['Chameau', 'Scorpion', 'Puits', 'Vautour', 'Lézard', 'Tonneau', 
 const INN_B = ['Borgne', 'Rouge', 'Sec', 'Ivre', 'Doré', 'Fêlé', 'Joyeux', 'Brûlé', 'Perdu', 'Tranquille'];
 
 // ---------- Compétences et artisanat ----------
-const SKILLS = { forge: 'Forge', couture: 'Couture', bois: 'Menuiserie', recolte: 'Récolte' };
-const SKILL_TITLES = { forge: 'Forgeron', couture: 'Tailleur', bois: 'Menuisier', recolte: 'Récolteur' };
+const SKILLS = { forge: 'Forge', couture: 'Couture', bois: 'Menuiserie', recolte: 'Récolte', crochetage: 'Crochetage' };
+const SKILL_TITLES = { forge: 'Forgeron', couture: 'Tailleur', bois: 'Menuisier', recolte: 'Récolteur', crochetage: 'Voleur' };
 const STATIONS = {
   forge:    { name: 'Forge',     skill: 'forge',   mats: ['iron'] },
   tailleur: { name: 'Tailleur',  skill: 'couture', mats: ['cloth', 'leather'] },

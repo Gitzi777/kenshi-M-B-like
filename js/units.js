@@ -45,7 +45,11 @@ function makeCharacter(look) {
   const backSlot = new T.Group();
   backSlot.position.set(0, 1.2, -0.2);
   body.add(backSlot);
-  return { root, body, legL, legR, armL, armR, torso, tabard, headSlot, weaponSlot, bowSlot, backSlot, mBody, mSkin, mPants, hurtMats: [mBody, mSkin] };
+  const hipSlot = new T.Group();
+  hipSlot.position.set(0.3, 0.98, 0.02);
+  hipSlot.rotation.x = Math.PI * 0.62;
+  body.add(hipSlot);
+  return { root, body, legL, legR, armL, armR, torso, tabard, headSlot, weaponSlot, bowSlot, backSlot, hipSlot, mBody, mSkin, mPants, hurtMats: [mBody, mSkin] };
 }
 
 // ---------- Modèle 3D d'un animal (quadrupède) ----------
@@ -82,7 +86,7 @@ function makeAnimalModel(sp) {
   const armL = leg(-0.18, 0.38), armR = leg(0.18, 0.38), legL = leg(-0.18, -0.38), legR = leg(0.18, -0.38);
   const dummy = () => new T.Group();
   return { root, body, legL, legR, armL, armR, torso, head: headG, tail, tabard: { visible: false, material: { color: new T.Color() } },
-    headSlot: dummy(), weaponSlot: dummy(), bowSlot: dummy(), backSlot: dummy(), mBody: m, mSkin: m, hurtMats: [m] };
+    headSlot: dummy(), weaponSlot: dummy(), bowSlot: dummy(), backSlot: dummy(), hipSlot: dummy(), mBody: m, mSkin: m, hurtMats: [m] };
 }
 
 function clearGroup(g) { while (g.children.length) g.remove(g.children[0]); }
@@ -156,9 +160,11 @@ function dressUnit(u) {
   clearGroup(c.weaponSlot);
   clearGroup(c.bowSlot);
   clearGroup(c.backSlot);
-  if (u.mode === 'bow' && IT(u.equip.bow)) c.bowSlot.add(buildBow());
+  clearGroup(c.hipSlot);
+  if (u.mode === 'bow' && IT(u.equip.bow) && !u.sheathed) c.bowSlot.add(buildBow());
   else {
-    if (u.equip.weapon) c.weaponSlot.add(buildWeapon(u.equip.weapon));
+    // arme rangée : à la ceinture ; dégainée : en main
+    if (u.equip.weapon) (u.sheathed ? c.hipSlot : c.weaponSlot).add(buildWeapon(u.equip.weapon));
     if (u.equip.bow) { const b = buildBow(); b.rotation.z = 0.6; c.backSlot.add(b); }
   }
   if (u.carry) c.backSlot.add(part(0.55, 0.5, 0.4, '#8a6a40', 0, 0.15, -0.1));
@@ -174,7 +180,7 @@ function dressUnit(u) {
 const units = [];
 let player = null;
 const isPlayerSide = u => u.faction === 'player';
-const alive = u => u && !u.dead && !(u.down > 0) && !(u.isPlayer && state.ko > 0);
+const alive = u => u && !u.dead && !(u.down > 0) && !(u.isPlayer && state.ko > 0) && !u.hidden;
 const squad = () => units.filter(u => u.faction === 'player' && !u.isPlayer && !u.dead);
 const team = () => units.filter(u => u.faction === 'player' && !u.dead);
 const displayName = u => u.title ? `${u.title} ${u.name}` : u.name;
@@ -235,7 +241,8 @@ function makeUnit(o) {
     blockChance: o.blockChance != null ? o.blockChance : 0.3, blockSkill: o.blockSkill || 0.5,
     arrows: o.arrows || 0, coins: o.coins || 0, goods: o.goods || {},
     level: o.level || 1, xp: o.xp || 0, stats: o.stats || null,
-    skills: { forge: 0, couture: 0, bois: 0, recolte: 0, ...(o.skills || {}) },
+    skills: { forge: 0, couture: 0, bois: 0, recolte: 0, crochetage: 0, ...(o.skills || {}) },
+    sheathed: !!o.sheathed, jailed: null, fugitive: null, carriedBy: null, lastHitBy: null,
     yaw: rand(-3, 3), moving: 0, walk: 0, twist: 0,
     atkCd: rand(0, 1), atk: null, block: null, stagger: 0, draw: -1,
     hurt: 0, knock: { x: 0, z: 0 }, down: 0,
@@ -328,7 +335,8 @@ function hostileF(a, b) {
   if (fa.bandit || fb.bandit) return true;
   return state.relations[relKey(a, b)] === 'war';
 }
-const hostile = (u, o) => hostileF(u.faction, o.faction) || u.angryAt === o || o.angryAt === u;
+const isFugitiveFor = (o, fid) => o.fugitive && o.fugitive.f === fid && (state.clock || 0) < o.fugitive.until;
+const hostile = (u, o) => hostileF(u.faction, o.faction) || u.angryAt === o || o.angryAt === u || isFugitiveFor(o, u.faction) || isFugitiveFor(u, o.faction);
 // ton camp peut frapper tout le monde sauf lui-même
 const canHit = (u, o) => o !== u && (isPlayerSide(u) ? !isPlayerSide(o) : hostile(u, o));
 
@@ -349,8 +357,9 @@ function facing(u, other) {
 }
 
 function startAttack(u, dir) {
-  if (u.atkCd > 0 || u.atk || u.stagger > 0 || u.mode === 'bow') return false;
+  if (u.atkCd > 0 || u.atk || u.stagger > 0 || u.mode === 'bow' || u.carrying) return false;
   if (u.isPlayer && u.block) return false;
+  if (u.sheathed) { setSheathed(u, false); return false; }
   const windup = u.isPlayer ? 0.28 : u.animal ? 0.35 : 0.5;
   if (u.isPlayer && !settings.directional) { u.combo = ((u.combo || 0) + 1) % 3; dir = ['droite', 'gauche', 'haut'][u.combo]; }
   u.atk = { t: 0, dir: dir || pick(Object.keys(DIRS)), windup, total: windup + 0.35, hit: false };
@@ -395,7 +404,8 @@ function damage(o, by, amount, dir, ranged) {
   }
   amount *= Math.max(0.3, 1 - armorOf(o) * 0.055);
   amount = Math.max(blocked ? 0 : 1, Math.round(amount));
-  if (isPlayerSide(by) && !isPlayerSide(o) && !o.animal) playerAttacked(o.faction);
+  if (isPlayerSide(by) && !isPlayerSide(o) && !o.animal && !isFugitiveFor(by, o.faction) && !hostileF('player', o.faction)) playerAttacked(o.faction);
+  o.lastHitBy = by.faction;
   o.hp -= amount;
   if (amount > 0) {
     o.hurt = 0.15;
@@ -452,6 +462,8 @@ const lootEmpty = l => !l || (!l.items.length && !l.coins && !Object.values(l.go
 function kill(o, by) {
   // ton escouade n'est jamais tuée : elle tombe K.O. comme dans Kenshi
   if (isPlayerSide(o)) { downUnit(o); return; }
+  // les humains tombent souvent K.O. au lieu de mourir (on peut les fouiller, les porter, les livrer)
+  if (!o.animal && !o.civil && o.rank !== 'ruler' && !o.down && Math.random() < 0.5) { npcDown(o); return; }
   o.dead = true;
   o.atk = null; o.block = null; o.draw = -1;
   if (o.bar) o.bar.sp.visible = false;
@@ -471,46 +483,41 @@ function kill(o, by) {
   }
 }
 
+function npcDown(o) {
+  o.down = rand(40, 70); o.hp = 0;
+  o.atk = null; o.block = null; o.draw = -1; o.target = null;
+  if (o.bar) o.bar.sp.visible = false;
+  o.loot = makeLoot(o);
+  for (const u of units) if (u.target === o) u.target = null;
+  floatText(o.pos, 'K.O.', '#ffd27a');
+}
+function npcWake(o) {
+  o.down = 0;
+  o.hp = Math.round(o.maxHp * 0.25);
+  // ce qu'on lui a pris ne revient pas
+  if (o.loot) {
+    for (const slot of ['weapon', 'bow', 'armor', 'helmet']) if (o.equip[slot] && o.loot.taken && o.loot.taken.includes(o.equip[slot])) o.equip[slot] = null;
+    if (o.loot.coinsTaken) o.coins = 0;
+    dressUnit(o);
+  }
+  o.loot = null;
+  if (o.bar) { o.bar.sp.visible = true; drawBar(o); }
+}
+
 function downUnit(o) {
   if (o.down > 0) return;
   o.down = 25; o.hp = 0;
   o.atk = null; o.block = null; o.draw = -1; o.target = null; o.cmd = null;
+  if (o.carrying) dropCarried(o);
   for (const u of units) if (u.target === o) u.target = null;
   floatText(o.pos, 'K.O.', '#ff6b6b');
   logMsg(`${o.name} est à terre !`, 'warn');
-  const up = team().filter(u => !(u.down > 0));
-  if (!up.length) { knockOut(); return; }
-  if (o === player) { takeControl(up[0]); logMsg(`Tu prends le contrôle de ${up[0].name}.`); }
-}
-
-function knockOut() {
-  if (state.ko > 0) return;
-  state.ko = 4;
-  for (const u of team()) { u.atk = null; u.block = null; u.draw = -1; }
-  const lost = Math.floor(state.money / 2);
-  state.money -= lost;
-  for (const g in state.goods) state.goods[g] = Math.floor(state.goods[g] / 2);
-  document.getElementById('koText').textContent =
-    `Toute l'escouade est à terre. On vous dépouille (-${lost} 💰, la moitié des marchandises). Vous vous réveillerez dans la ville la plus proche…`;
-  document.getElementById('ko').classList.remove('hidden');
-  for (const u of units) if (u.target && isPlayerSide(u.target)) u.target = null;
-  if (document.pointerLockElement) document.exitPointerLock();
-  addChronicle(`L'escouade de ${player.name} a été laissée pour morte.`, '💀');
-}
-
-function wakeUp() {
-  const s = nearestSettlement(player.pos, s => !playerHostileTo(s.faction) && !F(s.faction).bandit) || nearestSettlement(player.pos);
-  const g = gatePos(s, 6);
-  for (const u of team()) {
-    u.down = 0;
-    u.hp = Math.round(u.maxHp * 0.3);
-    u.pos.set(g.x + rand(-3, 3), heightAt(g.x, g.z), g.z + rand(-3, 3));
-    u.cmd = null; u.assignedNode = u.assignedNode != null ? u.assignedNode : null;
-    drawBar(u);
-  }
-  player.pos.set(g.x, heightAt(g.x, g.z), g.z);
-  document.getElementById('ko').classList.add('hidden');
-  logMsg(`Vous vous réveillez à ${s.name}, couverts de bleus.`);
+  if (o.jailed) return;
+  // défaite : plus personne debout autour du combat
+  const ref = o.pos;
+  const upNear = team().filter(u => !(u.down > 0) && !u.jailed && d2(u.pos, ref) < 40);
+  if (!upNear.length) { resolveDefeat(team().filter(u => u.down > 0 && d2(u.pos, ref) < 40), o.lastHitBy); return; }
+  if (o === player) { takeControl(upNear[0]); logMsg(`Tu prends le contrôle de ${upNear[0].name}.`); }
 }
 
 // Changer de personnage contrôlé (comme dans Kenshi)
@@ -520,6 +527,7 @@ function takeControl(u) {
   if (old) {
     old.isPlayer = false;
     old.block = null; old.draw = -1; old.target = null; old.cmd = null; old.working = false;
+    if (old.carrying) dropCarried(old);
     if (old.bar) old.bar.sp.visible = true;
     u.inv = old.inv; old.inv = [];
   }
@@ -607,11 +615,12 @@ function collide(u) {
     const dx = u.pos.x - s.x, dz = u.pos.z - s.z;
     const d = Math.hypot(dx, dz);
     const gap = s.type === 'ville' ? 0.15 : 0.22;
-    if (Math.abs(d - s.r) < 1.1 && Math.abs(angleDiff(Math.atan2(dz, dx), s.gate)) > gap) {
+    if (Math.abs(d - s.r) < 1.1 && Math.abs(angleDiff(Math.atan2(dz, dx), s.gate)) > gap * 34 / s.r) {
       const nr = d < s.r ? s.r - 1.1 : s.r + 1.1;
       u.pos.x = s.x + dx / d * nr; u.pos.z = s.z + dz / d * nr;
     }
   }
+  pushOutOfWalls(u);
   u.pos.x = clamp(u.pos.x, -HALF, HALF);
   u.pos.z = clamp(u.pos.z, -HALF, HALF);
 }
@@ -638,7 +647,7 @@ function nearestHostile(u, range, from = u.pos) {
   const f = F(u.faction);
   const avoidTowns = (f && f.bandit) || u.animal;
   for (const o of units) {
-    if (!alive(o) || o === u || o.civil || !hostile(u, o)) continue;
+    if (!alive(o) || o === u || o.civil || o.jailed || !hostile(u, o)) continue;
     if (avoidTowns && settlementAt(o.pos, 2) && settlementAt(o.pos, 2).type !== 'repaire') continue;
     const d = d2(from, o.pos);
     if (d < bd) { bd = d; best = o; }
@@ -653,8 +662,16 @@ function setMode(u, mode) {
   u.draw = -1;
   dressUnit(u);
 }
+function setSheathed(u, v) {
+  if (u.sheathed === v) return;
+  u.sheathed = v;
+  if (v) { u.block = null; u.draw = -1; }
+  dressUnit(u);
+}
 
 function fight(u, e, dt) {
+  if (u.sheathed) setSheathed(u, false);
+  u.idleT = 0;
   const d = d2(u.pos, e.pos);
   const bow = bowOf(u);
   const angle = Math.atan2(e.pos.x - u.pos.x, e.pos.z - u.pos.z);
@@ -718,8 +735,11 @@ function runCommand(u, dt) {
 }
 
 function updatePlayerSideAI(u, dt, idx) {
+  if (u.jailed) { u.moving = 0; return; }
   if (u.cmd && runCommand(u, dt)) return;
   if (u.isPlayer) return; // le personnage contrôlé ne bouge que sur ordre
+  u.idleT = (u.idleT || 0) + dt;
+  if (u.idleT > 6 && !u.sheathed && !u.target) setSheathed(u, true);
   if (u.target && (!alive(u.target) || !hostile(u, u.target) || d2(u.pos, u.target.pos) > 70)) u.target = null;
   u.retarget -= dt;
   if (u.retarget <= 0) {
@@ -792,7 +812,7 @@ function updateNPC(u, dt, idx) {
   u.working = false;
   if (isPlayerSide(u)) { updatePlayerSideAI(u, dt, idx); return; }
   u.retarget -= dt;
-  if (u.target && (!alive(u.target) || !hostile(u, u.target) || d2(u.pos, u.target.pos) > 70)) u.target = null;
+  if (u.target && (!alive(u.target) || u.target.jailed || !hostile(u, u.target) || d2(u.pos, u.target.pos) > 70)) u.target = null;
   const fac = F(u.faction);
   if (fac && fac.bandit && u.target && settlementAt(u.target.pos, 2) && settlementAt(u.target.pos, 2).type !== 'repaire') u.target = null;
   if (u.retarget <= 0) {
@@ -892,8 +912,12 @@ function updateUnits(dt) {
   for (const u of units) {
     if (u.dead) { u.deadTime += dt; continue; }
     if (u.down > 0) {
+      if (u.carriedBy) continue;
       u.down -= dt;
-      if (u.down <= 0 && state.ko <= 0) { u.hp = Math.round(u.maxHp * 0.25); drawBar(u); logMsg(`${u.name} se relève.`); }
+      if (u.down <= 0) {
+        if (isPlayerSide(u)) { u.hp = Math.round(u.maxHp * 0.25); drawBar(u); logMsg(`${u.name} se relève.`); }
+        else npcWake(u);
+      }
       continue;
     }
     u.atkCd -= dt;
@@ -909,7 +933,7 @@ function updateUnits(dt) {
     u.knock.x *= 0.85; u.knock.z *= 0.85;
   }
   separate();
-  for (const u of units) if (!u.dead) { collide(u); u.pos.y = heightAt(u.pos.x, u.pos.z); }
+  for (const u of units) if (!u.dead && !u.carriedBy) { collide(u); u.pos.y = heightAt(u.pos.x, u.pos.z); }
   for (let i = units.length - 1; i >= 0; i--) {
     if (units[i].dead && units[i].deadTime > 120) removeUnit(units[i]);
   }
