@@ -275,3 +275,33 @@ function updatePicking(dt) {
   player.working = true;
   if (state.picking.t <= 0) finishPick();
 }
+
+// ---------- Achever un ennemi assommé ----------
+function finishOffNear(target) {
+  let o = target;
+  if (!o) {
+    let bd = 2.4;
+    for (const u of units) {
+      if (!(u.down > 0) || u.dead || isPlayerSide(u) || u.carriedBy) continue;
+      const d = d2(u.pos, player.pos);
+      if (d < bd) { bd = d; o = u; }
+    }
+  }
+  if (!o) { logMsg('Personne à achever à portée.'); return; }
+  if (player.sheathed) setSheathed(player, false);
+  player.yaw = Math.atan2(o.pos.x - player.pos.x, o.pos.z - player.pos.z);
+  player.atk = { t: 0, dir: 'haut', windup: 0.25, total: 0.6, hit: true };
+  // tuer quelqu'un d'une faction neutre sous les yeux de témoins fait de toi un meurtrier
+  const f = F(o.faction);
+  if (f && !hostileF('player', o.faction)) {
+    const seen = witnesses(o.pos, o.faction).concat(units.filter(u => alive(u) && u.faction === o.faction && !u.civil && d2(u.pos, o.pos) < 18));
+    if (seen.length) playerAttacked(o.faction);
+    else state.rep[o.faction] = (state.rep[o.faction] || 0) - 2;
+  }
+  const loot = o.loot;
+  o.down = 0; o.hp = 0; o.noKO = true;
+  kill(o, player);
+  if (loot) o.loot = loot;
+  floatText(o.pos, 'achevé', '#ff6b6b');
+  logMsg(`${player.name} achève ${o.name}.`);
+}

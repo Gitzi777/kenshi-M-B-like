@@ -113,7 +113,7 @@ function renderHud() {
   else if (!state.panel && state.ko <= 0) {
     const corpse = nearCorpse();
     const lk = lockTargetNear(player.pos);
-    if (corpse) txt = `F : fouiller ${corpse.name}${corpse.down > 0 ? ' · G : le porter' : ''}`;
+    if (corpse) txt = `F : fouiller ${corpse.name}${corpse.down > 0 ? ' · G : le porter · K : l\'achever' : ''}`;
     else if (lk) txt = `E : crocheter (${lk.name}, niveau ${lk.lock})`;
     else if (state.currentService) txt = `E : ${state.currentService.name}`;
     else if (state.currentTown && state.currentTown.type === 'repaire') txt = '';
@@ -684,7 +684,8 @@ function renderLoot() {
         ${l.items.map((id, i) => `<div class="item"><span><b>${IT(id).name}</b><small>${SLOT_NAMES[IT(id).slot]} · ${itemStats(id)}</small></span><button data-item="${i}">Prendre</button></div>`).join('')}
         ${lootEmpty(l) ? '<small>Il ne reste rien.</small>' : ''}
       </div>
-      <button data-all ${lootEmpty(l) ? 'disabled' : ''}>Tout prendre</button></div>`;
+      <button data-all ${lootEmpty(l) ? 'disabled' : ''}>Tout prendre</button>
+      ${c.down > 0 && !c.dead ? '<button data-finish>Achever (K)</button>' : ''}</div>`;
 }
 $('loot').addEventListener('click', e => {
   const b = e.target.closest('button');
@@ -700,6 +701,7 @@ $('loot').addEventListener('click', e => {
     const seen = witnesses(player.pos, l.owner);
     if (seen.length) { l.warned = true; floatText(seen[0].pos, 'Au voleur !', '#ff6b6b'); player.fugitive = { f: l.owner, until: (state.clock || 0) + DAY_LENGTH }; state.rep[l.owner] = (state.rep[l.owner] || 0) - 10; logMsg(`${seen[0].name} t'a vu voler ! Les gardes te poursuivent.`, 'warn'); }
   }
+  if ('finish' in d) { finishOffNear(c); closePanel(); return; }
   if ('coins' in d) takeCoins();
   else if (d.good) takeGood(d.good);
   else if (d.item) takeItem(Number(d.item));
@@ -893,6 +895,7 @@ function renderSettings() {
       <label class="row">Sensibilité de la souris <input id="sSens" type="range" min="0.2" max="2.5" step="0.05" value="${settings.sens}"> <b id="sSensV">${settings.sens.toFixed(2)}</b></label>
       <label class="row"><input id="sInv" type="checkbox" ${settings.invertY ? 'checked' : ''}> Inverser l'axe vertical</label>
       <label class="row"><input id="sSmooth" type="checkbox" ${settings.smooth ? 'checked' : ''}> Caméra lissée</label>
+      <label class="row"><input id="sTank" type="checkbox" ${settings.tank !== false ? 'checked' : ''}> Vue suivie : Q et D font tourner le personnage, la caméra reste derrière lui (conseillé sur Mac)</label>
       <label class="row">Caméra (touche V pour changer)
         <select id="sCam">
           <option value="suivie" ${settings.camMode === 'suivie' ? 'selected' : ''}>Vue suivie (conseillée) : caméra derrière toi, souris libre, tu frappes vers le curseur</option>
@@ -908,6 +911,7 @@ $('settings').addEventListener('input', e => {
   if (e.target.id === 'sInv') settings.invertY = e.target.checked;
   if (e.target.id === 'sDir') settings.directional = e.target.checked;
   if (e.target.id === 'sSmooth') settings.smooth = e.target.checked;
+  if (e.target.id === 'sTank') settings.tank = e.target.checked;
   if (e.target.id === 'sCam') setCamMode(e.target.value);
   saveSettings();
 });

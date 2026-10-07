@@ -30,7 +30,7 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
   des capitaines de patrouille. Tous les PNJ ont un nom.
 - **Escouade façon Kenshi** : prends le contrôle de n'importe quel membre (C ou clic sur son nom). Les membres
   tombent K.O. au lieu de mourir. Vue tactique (V) : sélection à la souris, clic droit pour déplacer ou attaquer.
-- **Dangers** : hyènes, loups, ours, scorpions géants (plus nombreux la nuit), gibier à chasser pour la viande
+- **Dangers** : hyènes, loups, ours, scorpions géants (plus nombreux la nuit, ils attaquent aussi les villageois), gibier à chasser pour la viande
   et le cuir, cannibales et brigands avec leurs repaires, tempêtes de sable dans le désert.
 - **Combat** : parade automatique par défaut, combat directionnel en option. Arcs et flèches.
 - **Équipement, fouille des corps, réputation, serment, sauvegarde.**
@@ -39,14 +39,15 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
 
 | Action | Touche |
 |---|---|
-| Bouger | ZQSD ou WASD |
-| Caméra (vue suivie) | ← → tourner, molette zoom, clic molette glisser |
+| Avancer, reculer / tourner (vue suivie) | Z, S / Q, D (la caméra reste derrière toi) |
+| Regarder autour / zoomer | Trackpad : 2 doigts ↔ / 2 doigts ↕ ou pincer · souris : flèches et molette |
+| Parer | Espace maintenu (ou clic droit) |
+| Achever un ennemi assommé | K |
 | Dégainer / ranger l'arme | R |
 | Porter un corps / soigner | G / H |
 | Courir ou marcher (bascule) | Maj |
 | Changer de caméra (suivie, tactique, épaule) / de perso | V / C |
-| Caméra | Souris (clic pour la capturer, Échap pour la libérer), molette pour zoomer |
-| Frapper / parer | Clic gauche / clic droit maintenu |
+| Frapper (vers le curseur) | Clic gauche |
 | Arc ou mêlée | X |
 | Ville ou exploitation, fouiller, inventaire, carte | E, F, I, M |
 | Ordres à l'escouade | 1 suivre · 2 charger · 3 tenir · 4 groupés · 5 attaquer ma cible |

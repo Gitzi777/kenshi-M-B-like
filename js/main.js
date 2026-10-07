@@ -5,7 +5,7 @@
 const keys = {};
 const cam = { yaw: 0, pitch: 0.3, dist: 6, sy: 0, sp: 0.3, sd: 6, tx: 0, ty: 0, tz: 0, init: false };
 const rts = { x: 0, z: 0, yaw: 0, pitch: 0.95, dist: 40, sx: 0, sz: 0, sdist: 40, init: false };
-const fol = { yaw: 0, pitch: 0.62, dist: 10, sy: 0, sp: 0.62, sd: 10, tx: 0, ty: 0, tz: 0, init: false };
+const fol = { yaw: 0, pitch: 0.5, dist: 8, sy: 0, sp: 0.5, sd: 8, tx: 0, ty: 0, tz: 0, init: false, orbit: 0, orbitT: 0 };
 const mouse = { x: window.innerWidth / 2, y: window.innerHeight / 2, ground: null };
 renderer.domElement.tabIndex = 0;
 renderer.domElement.style.outline = 'none';
@@ -79,7 +79,12 @@ function playerPrimary() {
     if (state.goods.arrows > 0) player.draw = 0;
     else logMsg('Plus de flèches ! Achètes-en au bazar ou fabrique-en chez le menuisier.', 'warn');
   } else {
-    if (isFollow() && mouse.ground) player.yaw = Math.atan2(mouse.ground.x - player.pos.x, mouse.ground.z - player.pos.z);
+    if (isFollow() && mouse.ground) {
+      const old = player.yaw;
+      player.yaw = Math.atan2(mouse.ground.x - player.pos.x, mouse.ground.z - player.pos.z);
+      // la caméra ne pivote pas quand tu frappes de côté
+      if (settings.tank !== false) { fol.orbit -= angleDiff(old, player.yaw); fol.orbitT = 1.5; }
+    }
     startAttack(player, mouseDir);
   }
 }
@@ -130,11 +135,26 @@ window.addEventListener('mousemove', e => {
     }
   }
 });
+// molette, trackpad et pincement (Mac) : zoom proportionnel au geste, jamais par à-coups
 canvasEl.addEventListener('wheel', e => {
   e.preventDefault();
-  if (isFollow()) fol.dist = clamp(fol.dist * (e.deltaY > 0 ? 1.1 : 0.9), 3.5, 40);
-  else if (isRTS()) rts.dist = clamp(rts.dist * (e.deltaY > 0 ? 1.12 : 0.89), 8, 160);
-  else cam.dist = clamp(cam.dist * (e.deltaY > 0 ? 1.1 : 0.9), 2.5, 18);
+  if (state.mode !== 'play' || state.panel) return;
+  const scale = e.deltaMode === 1 ? 30 : 1;
+  const dx = clamp(e.deltaX * scale, -120, 120), dy = clamp(e.deltaY * scale, -120, 120);
+  const zoom = k => Math.exp(clamp(e.ctrlKey ? dy * 0.012 : dy * 0.0016, -0.25, 0.25) * k);
+  const wheelMouse = !e.ctrlKey && dx === 0 && Math.abs(dy) >= 50 && Number.isInteger(dy);
+  if (isFollow()) {
+    if (!e.ctrlKey && Math.abs(dx) > Math.abs(dy)) { fol.orbit -= dx * 0.004 * settings.sens; fol.orbitT = 2; }
+    else fol.dist = clamp(fol.dist * zoom(1), 3.5, 35);
+  } else if (isRTS()) {
+    if (e.ctrlKey || wheelMouse) rts.dist = clamp(rts.dist * zoom(1.2), 8, 160);
+    else {
+      // deux doigts : déplacer la carte
+      const k = rts.dist * 0.004;
+      rts.x += (-Math.cos(rts.yaw) * dx - Math.sin(rts.yaw) * dy) * k;
+      rts.z += (Math.sin(rts.yaw) * dx - Math.cos(rts.yaw) * dy) * k;
+    }
+  } else cam.dist = clamp(cam.dist * zoom(1), 2.5, 18);
 }, { passive: false });
 
 function giveOrder(o) {
@@ -201,6 +221,7 @@ window.addEventListener('keydown', e => {
     logMsg(player.sheathed ? 'Tu ranges ton arme.' : 'Tu dégaines.');
   } else if (k === 'g') { if (player.carrying) { dropCarried(player); logMsg('Tu poses ton fardeau.'); } else pickUpNear(); }
   else if (k === 'h') useKit();
+  else if (k === 'k') finishOffNear();
   else if (k === 'c') cycleControl();
   else if (k === 'x') {
     if (bowOf(player)) { setMode(player, player.mode === 'bow' ? 'melee' : 'bow'); logMsg(player.mode === 'bow' ? 'Arc en main.' : 'Arme de mêlée en main.'); }
@@ -209,7 +230,7 @@ window.addEventListener('keydown', e => {
     state.timeScale = state.timeScale > 1 ? 1 : 4;
     logMsg(state.timeScale > 1 ? '⏩ Le temps passe plus vite (T pour revenir).' : 'Vitesse normale.');
   } else if (e.code === 'Space' && isRTS()) { rts.x = player.pos.x; rts.z = player.pos.z; }
-  else if (e.code === 'Space' && isFollow()) { fol.yaw = player.yaw; }
+  else if (e.code === 'Space' && isFollow() && settings.tank === false) { fol.yaw = player.yaw; }
   else if (/^Digit[1-5]$/.test(e.code)) {
     const n = Number(e.code.slice(5));
     if (n === 5) attackMyTarget();
@@ -361,9 +382,25 @@ function updatePlayer(dt) {
     return;
   }
   const follow = isFollow();
+  const tank = follow && settings.tank !== false;
   const f = (keys.KeyW || (!follow && keys.ArrowUp) ? 1 : 0) - (keys.KeyS || (!follow && keys.ArrowDown) ? 1 : 0);
   const s = (keys.KeyD || (!follow && keys.ArrowRight) ? 1 : 0) - (keys.KeyA || (!follow && keys.ArrowLeft) ? 1 : 0);
-  player.block = rightHeld && player.mode === 'melee' && !player.atk && !player.sheathed ? { dir: mouseDir } : null;
+  const blocking = (rightHeld || keys.Space) && player.mode === 'melee' && !player.atk && !player.sheathed;
+  player.block = blocking ? { dir: mouseDir } : null;
+  // contrôles « char » : Q et D font tourner le personnage, Z et S avancent et reculent
+  if (tank && !state.harvest && !state.picking) {
+    if (s) player.yaw -= s * dt * (f < 0 ? -2.4 : 2.4);
+    if (f || s) player.cmd = null;
+    if (f) {
+      const mul = (f < 0 ? 0.6 : 1) * (player.block || player.atk ? 0.5 : state.run ? 1.6 : 1) * (player.carrying ? 0.65 : 1);
+      player.pos.x += Math.sin(player.yaw) * f * speedOf(player) * mul * dt;
+      player.pos.z += Math.cos(player.yaw) * f * speedOf(player) * mul * dt;
+      player.moving = mul;
+    } else if (!player.cmd) player.moving = 0;
+    if (player.draw >= 0) player.draw += dt;
+    player.working = false;
+    return;
+  }
   if (player.draw >= 0) player.draw += dt;
   const viewYaw = follow ? fol.yaw : cam.yaw;
   const fx = Math.sin(viewYaw), fz = Math.cos(viewYaw);
@@ -471,8 +508,14 @@ function updateCamera(dt) {
     return;
   }
   if (isFollow()) {
-    if (keys.ArrowLeft) fol.yaw += dt * 1.8;
-    if (keys.ArrowRight) fol.yaw -= dt * 1.8;
+    if (keys.ArrowLeft) { fol.orbit += dt * 1.8; fol.orbitT = 2; }
+    if (keys.ArrowRight) { fol.orbit -= dt * 1.8; fol.orbitT = 2; }
+    // la caméra reste derrière ton personnage ; un regard autour revient en place quand tu marches
+    if (settings.tank !== false) {
+      fol.orbitT -= dt;
+      if (fol.orbitT <= 0 && player.moving) fol.orbit *= Math.exp(-dt * 2.5);
+      fol.yaw = player.yaw + fol.orbit;
+    } else { fol.yaw += fol.orbit; fol.orbit = 0; }
     if (keys.ArrowUp) fol.pitch = clamp(fol.pitch + dt, 0.2, 1.35);
     if (keys.ArrowDown) fol.pitch = clamp(fol.pitch - dt, 0.2, 1.35);
     const k = 1 - Math.exp(-dt * 10);

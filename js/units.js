@@ -463,7 +463,7 @@ function kill(o, by) {
   // ton escouade n'est jamais tuée : elle tombe K.O. comme dans Kenshi
   if (isPlayerSide(o)) { downUnit(o); return; }
   // les humains tombent souvent K.O. au lieu de mourir (on peut les fouiller, les porter, les livrer)
-  if (!o.animal && !o.civil && o.rank !== 'ruler' && !o.down && Math.random() < 0.5) { npcDown(o); return; }
+  if (!o.animal && !o.civil && o.rank !== 'ruler' && !o.down && !o.noKO && Math.random() < 0.5) { npcDown(o); return; }
   o.dead = true;
   o.atk = null; o.block = null; o.draw = -1;
   if (o.bar) o.bar.sp.visible = false;
@@ -647,7 +647,7 @@ function nearestHostile(u, range, from = u.pos) {
   const f = F(u.faction);
   const avoidTowns = (f && f.bandit) || u.animal;
   for (const o of units) {
-    if (!alive(o) || o === u || o.civil || o.jailed || !hostile(u, o)) continue;
+    if (!alive(o) || o === u || (o.civil && !u.animal) || o.jailed || !hostile(u, o)) continue;
     if (avoidTowns && settlementAt(o.pos, 2) && settlementAt(o.pos, 2).type !== 'repaire') continue;
     const d = d2(from, o.pos);
     if (d < bd) { bd = d; best = o; }
