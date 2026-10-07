@@ -13,6 +13,9 @@
   <div id="creation" class="panel">
     <h1 class="logo">Terres Arides</h1>
     <button id="cContinue" class="big alt hidden"></button>
+    <div class="label">Monde</div>
+    <div id="cWorld" class="note"></div>
+    <div class="rowb"><button id="cReroll">🎲 Générer un autre monde</button><button id="cSettings">⚙ Réglages</button></div>
     <h2>Nouveau personnage</h2>
     <label>Nom <input id="cName" maxlength="16" value="Vagabond"></label>
     <div class="label">Origine</div>
@@ -32,16 +35,18 @@
   <div id="hud" class="hidden">
     <div id="topbar">
       <span>💰 <b id="money">0</b></span>
-      <span>🍖 <b id="food">0</b></span>
+      <span>🌾 <b id="food">0</b></span>
       <span>🏹 <b id="arrowsCount">0</b></span>
       <span>🎒 <b id="cargo">0/0</b> kg</span>
       <span>☀️ Jour <b id="day">1</b></span>
+      <span>🗺 <b id="biome"></b></span>
       <span id="speed"></span>
       <span id="allegiance"></span>
       <span id="orderLabel"></span>
       <span class="tbtns">
         <button id="invBtn">Inventaire (I)</button>
         <button id="mapBtn">Carte (M)</button>
+        <button id="setBtn">⚙</button>
         <button id="saveBtn">💾</button>
       </span>
     </div>
@@ -56,10 +61,10 @@
     <div id="log"></div>
     <canvas id="minimap" width="180" height="180"></canvas>
     <div id="controls" class="panel">
-      <b>ZQSD</b> bouger · <b>Maj</b> courir · <b>Souris</b> caméra et direction du coup<br>
-      <b>Clic</b> frapper · <b>Clic droit</b> parer (bouge la souris du côté de l'attaque)<br>
-      <b>X</b> arc / mêlée · <b>E</b> ville · <b>F</b> fouiller · <b>I</b> inventaire · <b>M</b> carte<br>
-      <b>1 2 3</b> ordres · <b>T</b> temps accéléré · <b>Échap</b> libérer la souris
+      <b>ZQSD</b> bouger · <b>Maj</b> courir · <b>Souris</b> caméra · <b>Molette</b> zoom<br>
+      <b>Clic</b> frapper · <b>Clic droit</b> parer · <b>X</b> arc / mêlée<br>
+      <b>E</b> ville / exploitation · <b>F</b> fouiller · <b>I</b> inventaire · <b>M</b> carte<br>
+      <b>1 2 3</b> ordres · <b>T</b> temps accéléré · <b>O</b> réglages · <b>Échap</b> libérer la souris
     </div>
     <div id="dirInd"><span class="d-haut">▲</span><span class="d-gauche">◀</span><span class="d-droite">▶</span><span class="d-estoc">▼</span><i>+</i></div>
     <div id="threat"></div>
@@ -69,11 +74,8 @@
   <div id="inventory" class="panel big-panel hidden"></div>
   <div id="loot" class="panel big-panel hidden"></div>
   <div id="worldmap" class="hidden"></div>
-  <div id="intro" class="panel big-panel hidden">
-    <h2>Les Terres Arides</h2>
-    <div id="introText"></div>
-    <button id="introGo" class="big">Commencer l'aventure</button>
-  </div>
+  <div id="nodepanel" class="panel big-panel hidden"></div>
+  <div id="settings" class="panel big-panel hidden"></div>
   <div id="ko" class="hidden"><h1>K.O.</h1><p id="koText"></p></div>
   <div id="floats"></div>
 
@@ -82,6 +84,7 @@
   <script src="js/world.js"></script>
   <script src="js/units.js"></script>
   <script src="js/strategy.js"></script>
+  <script src="js/economy.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/main.js"></script>
 </body>

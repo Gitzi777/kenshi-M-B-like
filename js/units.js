@@ -128,6 +128,7 @@ function dressUnit(u) {
     if (u.equip.weapon) c.weaponSlot.add(buildWeapon(u.equip.weapon));
     if (u.equip.bow) { const b = buildBow(); b.rotation.z = 0.6; c.backSlot.add(b); }
   }
+  if (u.carry) c.backSlot.add(part(0.55, 0.5, 0.4, '#8a6a40', 0, 0.15, -0.1));
   if (u.banner) {
     const fp = makeFlagPole(F(u.faction), 3.2);
     fp.g.scale.setScalar(0.6);
@@ -178,9 +179,9 @@ function makeUnit(o) {
     hurt: 0, knock: { x: 0, z: 0 },
     target: null, retarget: 0, dead: false, deadTime: 0, loot: null,
     party: o.party || null, home: o.home || null, guardOf: o.guardOf || null, banner: !!o.banner,
-    mode: 'melee', sworn: false,
+    mode: 'melee', sworn: false, civil: !!o.civil, task: o.task || null, flee: 0, carry: false,
   };
-  if (!u.isPlayer) {
+  if (!u.isPlayer && !u.civil) {
     const col = u.faction === 'player' ? '#6fcf5a' : (F(u.faction) ? F(u.faction).map : '#ff6b4a');
     u.bar = makeBar(col === '#1d1d1d' ? '#ff5a3c' : col);
     u.bar.sp.position.y = 2.3 * (look.height || 1);
@@ -201,7 +202,7 @@ function removeUnit(u) {
 // Crée un soldat d'une faction à partir d'un type de troupe
 function makeTroop(fid, troop, x, z, extra = {}) {
   const fac = F(fid);
-  const tpl = (fac.troops && fac.troops[troop]) || GENERIC_TROOPS[troop] || GENERIC_TROOPS.recrue;
+  const tpl = (fac.troops && fac.troops[troop]) || CULTURES.guerrier.troops[troop] || CULTURES.guerrier.troops.recrue;
   const base = TROOP_BASE[troop] || TROOP_BASE.recrue;
   const bonus = fac.bandit ? Math.min(state.day, 10) * 3 : 0;
   const u = makeUnit({
@@ -273,6 +274,7 @@ function startAttack(u, dir) {
   if (u.atkCd > 0 || u.atk || u.stagger > 0 || u.mode === 'bow') return false;
   if (u.isPlayer && u.block) return false;
   const windup = u.isPlayer ? 0.28 : 0.5;
+  if (u.isPlayer && !settings.directional) { u.combo = ((u.combo || 0) + 1) % 3; dir = ['droite', 'gauche', 'haut'][u.combo]; }
   u.atk = { t: 0, dir: dir || pick(Object.keys(DIRS)), windup, total: windup + 0.35, hit: false };
   u.atkCd = cooldownOf(u) + windup;
   const reach = weaponOf(u).reach;
@@ -304,7 +306,7 @@ function damage(o, by, amount, dir, ranged) {
   if (!alive(o)) return;
   let blocked = false;
   if (!ranged && o.block && facing(o, by) > 0.3) {
-    if (o.block.dir === dir) {
+    if (o.block.dir === dir || (o.isPlayer && !settings.directional)) {
       blocked = true;
       amount *= 0.08;
       floatText(o.pos, 'paré !', '#9fc3ff');
@@ -330,6 +332,7 @@ function damage(o, by, amount, dir, ranged) {
   drawBar(o);
   if (!o.isPlayer && (!o.target || Math.random() < 0.5) && hostile(o, by)) o.target = by;
   if (o.party) o.party.aggro = true;
+  if (o.civil) { o.flee = 6; o.fleeFrom = { x: by.pos.x, z: by.pos.z }; }
   if (by.isPlayer) gainXp(by, 2);
   if (o.hp <= 0) kill(o, by);
 }
@@ -354,10 +357,12 @@ function makeLoot(o) {
   }
   if (o.arrows > 0) loot.goods.arrows = (loot.goods.arrows || 0) + o.arrows;
   if (Math.random() < 0.35) loot.goods.food = (loot.goods.food || 0) + randInt(1, 2);
-  if (o.party && o.party.kind === 'caravan') {
-    loot.goods[pick(['spices', 'cloth', 'iron'])] = randInt(2, 5);
-    loot.coins += randInt(20, 60);
+  if (o.party && o.party.cargo) {
+    const share = Math.ceil(o.party.cargo.qty / Math.max(1, o.party.units.length));
+    loot.goods[o.party.cargo.good] = (loot.goods[o.party.cargo.good] || 0) + share;
+    loot.coins += randInt(10, 40);
   }
+  if (o.carry && o.task && o.task.good) loot.goods[o.task.good] = (loot.goods[o.task.good] || 0) + 3;
   return loot;
 }
 const lootEmpty = l => !l || (!l.items.length && !l.coins && !Object.values(l.goods).some(v => v > 0));
@@ -470,7 +475,7 @@ function steer(u, tx, tz, dt, speedMul = 1, stop = 0.3) {
 }
 
 function collide(u) {
-  for (const o of obstacles) {
+  for (const o of obstaclesNear(u.pos.x, u.pos.z)) {
     const dx = u.pos.x - o.x, dz = u.pos.z - o.z;
     if (Math.abs(dx) > o.r + 1 || Math.abs(dz) > o.r + 1) continue;
     const d = Math.hypot(dx, dz);
@@ -511,7 +516,7 @@ function nearestHostile(u, range, from = u.pos) {
   let best = null, bd = range;
   const bandit = F(u.faction) && F(u.faction).bandit;
   for (const o of units) {
-    if (!alive(o) || o === u || !hostile(u, o)) continue;
+    if (!alive(o) || o === u || o.civil || !hostile(u, o)) continue;
     if (bandit && settlementAt(o.pos, 2)) continue;
     const d = d2(from, o.pos);
     if (d < bd) { bd = d; best = o; }
@@ -563,13 +568,16 @@ function pickTarget(u, range, from) {
 }
 
 function updateNPC(u, dt, idx) {
+  if (u.civil) { updateCivil(u, dt); return; }
+  u.working = false;
   u.retarget -= dt;
   if (u.target && (!alive(u.target) || !hostile(u, u.target) || d2(u.pos, u.target.pos) > 70)) u.target = null;
   const fac = F(u.faction);
   if (fac && fac.bandit && u.target && settlementAt(u.target.pos, 2)) u.target = null;
   if (u.retarget <= 0) {
     u.retarget = rand(0.4, 0.7);
-    if (isPlayerSide(u)) {
+    if (isPlayerSide(u) && u.assignedNode != null) pickTarget(u, 15);
+    else if (isPlayerSide(u)) {
       if (state.order === 'charge') pickTarget(u, 90);
       else if (state.order === 'follow') {
         const e = nearestHostile(u, 18);
@@ -583,6 +591,7 @@ function updateNPC(u, dt, idx) {
   setMode(u, 'melee');
 
   if (isPlayerSide(u)) {
+    if (u.assignedNode != null && updateAssignedWorker(u, dt)) return;
     if (state.order === 'hold') { const h = u.holdPos || u.pos; steer(u, h.x, h.z, dt, 1, 0.4); return; }
     const row = Math.floor(idx / 3), col = (idx % 3) - 1;
     const back = 2.5 + row * 1.6, side = col * 1.6, py = player.yaw;
@@ -650,6 +659,11 @@ function animate(u, dt) {
   c.armR.rotation.x = aR; c.armR.rotation.z = aRz;
   u.twist += (twist - u.twist) * Math.min(1, dt * 20);
   c.body.rotation.y = u.twist;
+  if (u.working && !u.atk) {
+    aR = -1.2 - Math.sin(u.walk * 1.5) * 1.1; aL = -0.6 - Math.sin(u.walk * 1.5) * 0.4;
+    u.walk += dt * 3;
+    c.armL.rotation.x = aL; c.armR.rotation.x = aR;
+  }
   u.hurt -= dt;
   const flash = u.hurt > 0 ? 0.6 : 0;
   for (const m of c.hurtMats) m.emissive.setRGB(flash, 0, 0);

@@ -3,7 +3,7 @@
 
 // ---------- Entrées ----------
 const keys = {};
-const cam = { yaw: 0, pitch: 0.35, dist: 6 };
+const cam = { yaw: 0, pitch: 0.3, dist: 6, sy: 0, sp: 0.3, sd: 6, tx: 0, ty: 0, tz: 0, init: false };
 let locked = false, rightHeld = false;
 let mouseDir = 'haut';
 const dirAcc = { x: 0, y: 0 };
@@ -31,8 +31,11 @@ document.addEventListener('pointerlockchange', () => { locked = document.pointer
 window.addEventListener('mousemove', e => {
   if (state.mode !== 'play' || state.panel) return;
   if (locked || (e.buttons & 2)) {
-    cam.yaw -= e.movementX * 0.0035;
-    cam.pitch = clamp(cam.pitch + e.movementY * 0.003, -0.25, 1.2);
+    // certains navigateurs envoient parfois des sauts énormes : on les ignore
+    const mx = clamp(e.movementX, -80, 80), my = clamp(e.movementY, -80, 80);
+    const k = 0.0022 * settings.sens;
+    cam.yaw -= mx * k;
+    cam.pitch = clamp(cam.pitch + my * k * (settings.invertY ? -1 : 1), -0.3, 1.25);
     dirAcc.x += e.movementX; dirAcc.y += e.movementY;
     if (Math.hypot(dirAcc.x, dirAcc.y) > 6) {
       mouseDir = Math.abs(dirAcc.x) > Math.abs(dirAcc.y) ? (dirAcc.x < 0 ? 'gauche' : 'droite') : (dirAcc.y < 0 ? 'haut' : 'estoc');
@@ -52,9 +55,14 @@ window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'escape') { closePanel(); return; }
   if (state.ko > 0) return;
+  if (k === 'o') { togglePanel('settings'); return; }
   if (k === 'm') togglePanel('map');
   else if (k === 'i' || e.code === 'Tab') togglePanel('inv');
-  else if (k === 'e') { if (state.panel === 'town') closePanel(); else if (state.currentTown && !state.panel) openPanel('town'); }
+  else if (k === 'e') {
+    if (state.panel === 'town' || state.panel === 'node') closePanel();
+    else if (!state.panel && state.currentTown) openPanel('town');
+    else if (!state.panel && state.currentNode) openPanel('node');
+  }
   else if (k === 'f' && !state.panel) {
     const c = nearCorpse();
     if (c) { state.lootTarget = c; openPanel('loot'); }
@@ -113,6 +121,18 @@ function updatePlayer(dt) {
   const fx = Math.sin(cam.yaw), fz = Math.cos(cam.yaw);
   let mx = fx * f - fz * s, mz = fz * f + fx * s;
   const len = Math.hypot(mx, mz);
+  // récolte à la main : rester immobile quelques secondes
+  if (state.harvest) {
+    if (len > 0 || player.atk) { state.harvest = null; logMsg('Récolte interrompue.'); }
+    else {
+      state.harvest.t -= dt;
+      player.working = true;
+      player.yaw = turnToward(player.yaw, Math.atan2(state.harvest.node.x - player.pos.x, state.harvest.node.z - player.pos.z), dt * 6);
+      if (state.harvest.t <= 0) { player.working = false; finishHarvest(); }
+      return;
+    }
+  }
+  player.working = false;
   const combat = player.block || player.atk || player.draw >= 0;
   if (len > 0) {
     mx /= len; mz /= len;
@@ -161,6 +181,7 @@ function update(dt) {
     }
   }
 
+  state.currentNode = settlementAt(player.pos) ? null : nodeAt(player.pos, 14);
   const town = settlementAt(player.pos);
   if (town !== state.currentTown) {
     state.currentTown = town;
@@ -186,24 +207,32 @@ function updateCamera(dt) {
     return;
   }
   const aiming = player.draw >= 0;
-  const dist = aiming ? Math.min(cam.dist, 3.2) : cam.dist;
-  const target = new T.Vector3(player.pos.x, player.pos.y + 1.7, player.pos.z);
-  const cp = Math.cos(cam.pitch);
-  const x = target.x - Math.sin(cam.yaw) * dist * cp;
-  const z = target.z - Math.cos(cam.yaw) * dist * cp;
-  const y = Math.max(target.y + Math.sin(cam.pitch) * dist, heightAt(x, z) + 0.6);
+  const wantDist = aiming ? Math.min(cam.dist, 3.2) : cam.dist;
+  // lissage : la caméra rejoint doucement sa cible (pas d'à-coups)
+  const k = settings.smooth ? 1 - Math.exp(-dt * 14) : 1;
+  const kp = settings.smooth ? 1 - Math.exp(-dt * 10) : 1;
+  if (!cam.init) { cam.sy = cam.yaw; cam.sp = cam.pitch; cam.sd = wantDist; cam.tx = player.pos.x; cam.ty = player.pos.y; cam.tz = player.pos.z; cam.init = true; }
+  cam.sy += angleDiff(cam.sy, cam.yaw) * k;
+  cam.sp += (cam.pitch - cam.sp) * k;
+  cam.sd += (wantDist - cam.sd) * kp;
+  cam.tx += (player.pos.x - cam.tx) * kp; cam.ty += (player.pos.y - cam.ty) * kp; cam.tz += (player.pos.z - cam.tz) * kp;
+  const target = new T.Vector3(cam.tx, cam.ty + 1.6, cam.tz);
+  const cp = Math.cos(cam.sp);
+  const x = target.x - Math.sin(cam.sy) * cam.sd * cp;
+  const z = target.z - Math.cos(cam.sy) * cam.sd * cp;
+  const y = Math.max(target.y + Math.sin(cam.sp) * cam.sd, heightAt(x, z) + 0.8);
   camera.position.set(x, y, z);
-  const shoulder = aiming ? 0.9 : 0.6;
   const look = target.clone();
-  look.x += -Math.cos(cam.yaw) * shoulder; look.z += Math.sin(cam.yaw) * shoulder;
+  if (aiming) { look.x += -Math.cos(cam.sy) * 0.8; look.z += Math.sin(cam.sy) * 0.8; }
+  look.y += 0.2;
   camera.lookAt(look);
 }
 
 function updateSky() {
   const phase = state.dayTimer / DAY_LENGTH;
   const light = clamp(0.55 + 0.6 * Math.sin(phase * Math.PI * 2 + 0.3), 0.12, 1);
-  sun.intensity = light * 1.1;
-  hemi.intensity = 0.2 + 0.5 * light;
+  sun.intensity = light * 0.95;
+  hemi.intensity = 0.2 + 0.4 * light;
   scene.background.copy(SKY_NIGHT).lerp(SKY_DAY, light);
   scene.fog.color.copy(scene.background);
   const a = phase * Math.PI * 2;
@@ -215,11 +244,14 @@ function updateSky() {
 // drapeaux qui flottent
 function waveFlags(t) {
   for (const s of state.settlements) for (const c of s.flags) c.rotation.y = Math.sin(t * 2 + s.x) * 0.25;
+  for (const n of state.nodes) if (n.flag) n.flag.rotation.y = Math.sin(t * 2 + n.x) * 0.25;
 }
 
 // ---------- Démarrage ----------
-initFactions();
-for (const def of SETTLEMENT_DEFS) makeSettlement(def);
+{
+  const save = readSave();
+  generateWorld(save && save.seed ? save.seed : randomSeed());
+}
 renderCreation();
 previewPlayer();
 

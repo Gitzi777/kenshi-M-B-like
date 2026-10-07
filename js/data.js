@@ -1,4 +1,4 @@
-// Terres Arides — données du jeu : réglages, objets, factions, lore.
+// Terres Arides — données du jeu : réglages, marchandises, biomes, ressources, objets, générateurs.
 'use strict';
 
 const T = THREE;
@@ -7,12 +7,13 @@ const T = THREE;
 const WORLD = 1200;              // le monde va de -600 à +600 (mètres)
 const HALF = WORLD / 2;
 const DAY_LENGTH = 240;          // secondes réelles par jour
-const BASE_CARRY = 30;           // poids transportable par toi
-const CARRY_PER_MEMBER = 20;     // poids en plus par compagnon
-const MAX_SQUAD = 8;             // toi compris
+const BASE_CARRY = 30;
+const CARRY_PER_MEMBER = 20;
+const MAX_SQUAD = 8;
 const SPAWN_DIST = 120;          // un groupe apparaît en 3D à moins de 120 m
-const DESPAWN_DIST = 170;        // et redevient « carte » au-delà de 170 m
-const SAVE_KEY = 'terres-arides-save-v1';
+const DESPAWN_DIST = 170;
+const SAVE_KEY = 'terres-arides-save-v2';
+const SETTINGS_KEY = 'terres-arides-settings';
 
 // ---------- Utilitaires ----------
 function mulberry32(a) {
@@ -26,6 +27,7 @@ function mulberry32(a) {
 const rand = (a, b) => a + Math.random() * (b - a);
 const randInt = (a, b) => Math.floor(rand(a, b + 1));
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+const rpick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const d2 = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
@@ -33,7 +35,6 @@ function angleDiff(a, b) { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; 
 function turnToward(cur, target, maxStep) { const d = angleDiff(cur, target); return cur + clamp(d, -maxStep, maxStep); }
 let _uid = 1;
 const uid = () => _uid++;
-// articles pour des phrases correctes : « les Clans de Fer déclarent… »
 const theF = (f, cap = false) => {
   const a = f.art || 'la';
   const s = (a === "l'" ? "l'" : a + ' ') + f.name;
@@ -44,44 +45,88 @@ const toF = f => ({ la: 'à la ', "l'": "à l'", le: 'au ', les: 'aux ' }[f.art 
 const deN = name => (/^[aeiouyéèêâîôûhAEIOUYÉÈÊÂÎÔÛH]/.test(name) ? "d'" : 'de ') + name;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+// Bruit de valeur lissé (pour le relief et les biomes)
+function makeNoise(seed) {
+  const rng = mulberry32(seed);
+  const p = new Uint8Array(512), v = new Float32Array(256);
+  for (let i = 0; i < 256; i++) { p[i] = i; v[i] = rng(); }
+  for (let i = 255; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [p[i], p[j]] = [p[j], p[i]]; }
+  for (let i = 0; i < 256; i++) p[i + 256] = p[i];
+  const n2 = (x, y) => {
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, X = xi & 255, Y = yi & 255;
+    const a = v[p[p[X] + Y]], b = v[p[p[X + 1] + Y]], c = v[p[p[X] + Y + 1]], d = v[p[p[X + 1] + Y + 1]];
+    const u = xf * xf * (3 - 2 * xf), w = yf * yf * (3 - 2 * yf);
+    return a + (b - a) * u + (c - a) * w + (a - b - c + d) * u * w;
+  };
+  return (x, y, oct = 4) => {
+    let s = 0, amp = 1, f = 1, n = 0;
+    for (let i = 0; i < oct; i++) { s += n2(x * f + i * 17.3, y * f - i * 9.1) * amp; n += amp; amp *= 0.5; f *= 2; }
+    return s / n;
+  };
+}
+
 // ---------- Marchandises ----------
 const GOODS = {
-  food:   { name: 'Nourriture', icon: '🍖', base: 8,  w: 1 },
-  cloth:  { name: 'Tissu',      icon: '🧵', base: 16, w: 1 },
-  iron:   { name: 'Fer',        icon: '⛏️', base: 26, w: 2 },
-  spices: { name: 'Épices',     icon: '🌶️', base: 42, w: 1 },
-  arrows: { name: 'Flèches',    icon: '🏹', base: 1,  w: 0 },
+  food:   { name: 'Céréales', icon: '🌾', base: 8,  w: 1 },
+  wood:   { name: 'Bois',     icon: '🪵', base: 7,  w: 2 },
+  iron:   { name: 'Fer',      icon: '⛏️', base: 26, w: 2 },
+  cloth:  { name: 'Coton',    icon: '🧵', base: 16, w: 1 },
+  spices: { name: 'Épices',   icon: '🌶️', base: 40, w: 1 },
+  salt:   { name: 'Sel',      icon: '🧂', base: 14, w: 1 },
+  arrows: { name: 'Flèches',  icon: '🏹', base: 1,  w: 0 },
+};
+const TRADE_GOODS = ['food', 'wood', 'iron', 'cloth', 'spices', 'salt'];
+// consommation par jour pour 100 habitants
+const CONSUMPTION = { food: 10, wood: 4, iron: 1.5, cloth: 3, spices: 1, salt: 2 };
+
+// ---------- Biomes ----------
+const BIOMES = {
+  desert:   { name: 'Désert',         color: [0.76, 0.62, 0.40] },
+  steppe:   { name: 'Steppe',         color: [0.58, 0.57, 0.33] },
+  foret:    { name: 'Forêt',          color: [0.30, 0.43, 0.20] },
+  montagne: { name: 'Montagnes',      color: [0.50, 0.45, 0.41] },
+  sel:      { name: 'Marais salants', color: [0.80, 0.79, 0.75] },
 };
 
-// ---------- Objets (armes, arcs, armures, casques) ----------
+// ---------- Ressources exploitables ----------
+const RESOURCES = {
+  ferme:  { name: 'Champs de céréales',   good: 'food',   biomes: ['steppe', 'foret'], rate: 14, crop: '#d8b84a' },
+  bois:   { name: 'Camp de bûcherons',    good: 'wood',   biomes: ['foret'],           rate: 10 },
+  fer:    { name: 'Gisement de fer',      good: 'iron',   biomes: ['montagne'],        rate: 6 },
+  coton:  { name: 'Plantation de coton',  good: 'cloth',  biomes: ['steppe'],          rate: 8,  crop: '#f2efe6' },
+  epices: { name: "Plantation d'épices",  good: 'spices', biomes: ['desert'],          rate: 4,  crop: '#b8452e' },
+  sel:    { name: 'Salines',              good: 'salt',   biomes: ['sel'],             rate: 9 },
+};
+
+// ---------- Objets ----------
 const FIST = { name: 'Poings', dmg: 4, cd: 0.75, reach: 1.7 };
 const ITEMS = {
-  baton:     { name: 'Bâton',            slot: 'weapon', dmg: 6,  cd: 0.9,  reach: 2.2, price: 15,  w: 2, model: 'staff', len: 1.4, color: '#6e5538' },
-  dague:     { name: 'Dague',            slot: 'weapon', dmg: 8,  cd: 0.7,  reach: 1.8, price: 40,  w: 1, model: 'blade', len: 0.4, color: '#c9ccd1' },
-  machette:  { name: 'Machette rouillée', slot: 'weapon', dmg: 10, cd: 0.95, reach: 2.0, price: 45,  w: 2, model: 'blade', len: 0.7, color: '#8f6f55' },
-  sabre:     { name: 'Sabre',            slot: 'weapon', dmg: 14, cd: 0.95, reach: 2.3, price: 140, w: 2, model: 'blade', len: 0.9, color: '#d8dadf' },
-  epee:      { name: 'Épée longue',      slot: 'weapon', dmg: 17, cd: 1.1,  reach: 2.5, price: 240, w: 3, model: 'blade', len: 1.1, color: '#e2e4e8' },
-  masse:     { name: "Masse d'armes",    slot: 'weapon', dmg: 20, cd: 1.3,  reach: 2.1, price: 200, w: 4, model: 'mace',  len: 0.7, color: '#5c5c5c' },
-  hache:     { name: 'Hache de guerre',  slot: 'weapon', dmg: 23, cd: 1.4,  reach: 2.3, price: 300, w: 4, model: 'axe',   len: 0.9, color: '#6a6a6a' },
-  lance:     { name: 'Lance',            slot: 'weapon', dmg: 15, cd: 1.1,  reach: 3.0, price: 160, w: 3, model: 'spear', len: 1.9, color: '#bdbdbd' },
-  cimeterre: { name: 'Cimeterre solaire', slot: 'weapon', dmg: 19, cd: 1.0, reach: 2.4, price: 380, w: 3, model: 'blade', len: 1.0, color: '#e8c547' },
+  baton:     { name: 'Bâton',             slot: 'weapon', dmg: 6,  cd: 0.9,  reach: 2.2, price: 15,  w: 2, mat: 'wood', model: 'staff', len: 1.4, color: '#6e5538' },
+  dague:     { name: 'Dague',             slot: 'weapon', dmg: 8,  cd: 0.7,  reach: 1.8, price: 40,  w: 1, mat: 'iron', model: 'blade', len: 0.4, color: '#c9ccd1' },
+  machette:  { name: 'Machette rouillée', slot: 'weapon', dmg: 10, cd: 0.95, reach: 2.0, price: 45,  w: 2, mat: 'iron', model: 'blade', len: 0.7, color: '#8f6f55' },
+  sabre:     { name: 'Sabre',             slot: 'weapon', dmg: 14, cd: 0.95, reach: 2.3, price: 140, w: 2, mat: 'iron', model: 'blade', len: 0.9, color: '#d8dadf' },
+  epee:      { name: 'Épée longue',       slot: 'weapon', dmg: 17, cd: 1.1,  reach: 2.5, price: 240, w: 3, mat: 'iron', model: 'blade', len: 1.1, color: '#e2e4e8' },
+  masse:     { name: "Masse d'armes",     slot: 'weapon', dmg: 20, cd: 1.3,  reach: 2.1, price: 200, w: 4, mat: 'iron', model: 'mace',  len: 0.7, color: '#5c5c5c' },
+  hache:     { name: 'Hache de guerre',   slot: 'weapon', dmg: 23, cd: 1.4,  reach: 2.3, price: 300, w: 4, mat: 'iron', model: 'axe',   len: 0.9, color: '#6a6a6a' },
+  lance:     { name: 'Lance',             slot: 'weapon', dmg: 15, cd: 1.1,  reach: 3.0, price: 160, w: 3, mat: 'wood', model: 'spear', len: 1.9, color: '#bdbdbd' },
+  cimeterre: { name: 'Cimeterre',         slot: 'weapon', dmg: 19, cd: 1.0,  reach: 2.4, price: 380, w: 3, mat: 'iron', model: 'blade', len: 1.0, color: '#e8c547' },
 
-  arc_court: { name: 'Arc court', slot: 'bow', dmg: 12, range: 45, draw: 0.7, price: 90,  w: 1 },
-  arc_long:  { name: 'Arc long',  slot: 'bow', dmg: 18, range: 70, draw: 1.0, price: 220, w: 2 },
+  arc_court: { name: 'Arc court', slot: 'bow', dmg: 12, range: 45, draw: 0.7, price: 90,  w: 1, mat: 'wood' },
+  arc_long:  { name: 'Arc long',  slot: 'bow', dmg: 18, range: 70, draw: 1.0, price: 220, w: 2, mat: 'wood' },
 
-  haillons:  { name: 'Haillons',          slot: 'armor', armor: 0, price: 2,   w: 1,  color: '#8a7a60' },
-  tunique:   { name: 'Tunique',           slot: 'armor', armor: 1, price: 20,  w: 1,  color: null },
-  robe:      { name: 'Robe sacrée',       slot: 'armor', armor: 2, price: 90,  w: 2,  color: '#efe6d0' },
-  cuir:      { name: 'Armure de cuir',    slot: 'armor', armor: 3, price: 110, w: 4,  color: '#6b4a2b' },
-  mailles:   { name: 'Cotte de mailles',  slot: 'armor', armor: 6, price: 320, w: 8,  color: '#8c9196', speed: -0.2 },
-  plaques:   { name: 'Armure de plaques', slot: 'armor', armor: 9, price: 650, w: 12, color: '#b9bec4', speed: -0.5 },
+  haillons: { name: 'Haillons',          slot: 'armor', armor: 0, price: 2,   w: 1,  mat: 'cloth', color: '#8a7a60' },
+  tunique:  { name: 'Tunique',           slot: 'armor', armor: 1, price: 20,  w: 1,  mat: 'cloth', color: null },
+  robe:     { name: 'Robe épaisse',      slot: 'armor', armor: 2, price: 90,  w: 2,  mat: 'cloth', color: '#efe6d0' },
+  cuir:     { name: 'Armure de cuir',    slot: 'armor', armor: 3, price: 110, w: 4,  mat: 'cloth', color: '#6b4a2b' },
+  mailles:  { name: 'Cotte de mailles',  slot: 'armor', armor: 6, price: 320, w: 8,  mat: 'iron', color: '#8c9196', speed: -0.2 },
+  plaques:  { name: 'Armure de plaques', slot: 'armor', armor: 9, price: 650, w: 12, mat: 'iron', color: '#b9bec4', speed: -0.5 },
 
-  bandana:     { name: 'Bandana',        slot: 'helmet', armor: 0, price: 5,   w: 0, model: 'band' },
-  capuche:     { name: 'Capuche',        slot: 'helmet', armor: 1, price: 15,  w: 0, model: 'hood' },
-  turban:      { name: 'Turban',         slot: 'helmet', armor: 1, price: 20,  w: 0, model: 'turban' },
-  casque_cuir: { name: 'Casque de cuir', slot: 'helmet', armor: 2, price: 60,  w: 1, model: 'cap',  color: '#6b4a2b' },
-  casque_fer:  { name: 'Casque de fer',  slot: 'helmet', armor: 4, price: 180, w: 2, model: 'helm', color: '#8c9196' },
-  heaume:      { name: 'Heaume',         slot: 'helmet', armor: 5, price: 300, w: 3, model: 'greathelm', color: '#b9bec4' },
+  bandana:     { name: 'Bandana',        slot: 'helmet', armor: 0, price: 5,   w: 0, mat: 'cloth', model: 'band' },
+  capuche:     { name: 'Capuche',        slot: 'helmet', armor: 1, price: 15,  w: 0, mat: 'cloth', model: 'hood' },
+  turban:      { name: 'Turban',         slot: 'helmet', armor: 1, price: 20,  w: 0, mat: 'cloth', model: 'turban' },
+  casque_cuir: { name: 'Casque de cuir', slot: 'helmet', armor: 2, price: 60,  w: 1, mat: 'cloth', model: 'cap',  color: '#6b4a2b' },
+  casque_fer:  { name: 'Casque de fer',  slot: 'helmet', armor: 4, price: 180, w: 2, mat: 'iron', model: 'helm', color: '#8c9196' },
+  heaume:      { name: 'Heaume',         slot: 'helmet', armor: 5, price: 300, w: 3, mat: 'iron', model: 'greathelm', color: '#b9bec4' },
 };
 const SLOT_NAMES = { weapon: 'Arme', bow: 'Arc', armor: 'Armure', helmet: 'Tête' };
 function itemStats(id) {
@@ -102,27 +147,19 @@ const TROOP_BASE = {
   chef:    { hp: 130, str: 5, label: 'Chef' },
 };
 
-// ---------- Lore ----------
-const WORLD_LORE = [
-  "Il y a soixante ans, l'Empire de Valmor s'est effondré quand ses grands puits se sont taris. " +
-  "Ses cités de marbre sont devenues des ruines que le sable avale un peu plus chaque année.",
-  "Sur les décombres, les survivants se sont regroupés. Les marchands de Port-Sable tiennent les routes du sel. " +
-  "Les forgerons des Clans de Fer creusent la montagne noire. Les prêtres d'Ashara prient un soleil qui les brûle. " +
-  "Les Nomades du Vent ne reconnaissent aucun mur.",
-  "Dans les dunes, les Chiens des Dunes pillent tout ce qui bouge. Les alliances se font et se défont, " +
-  "des seigneurs se proclament rois, des villes changent de bannière en une nuit.",
-  "Toi, tu n'es personne. Pour l'instant.",
-];
-
-// Factions de départ. colors = [principale, secondaire, emblème]. map = couleur sur la carte.
-const FACTION_DEFS = [
-  {
-    id: 'ligue', art: 'la', of: "de la Ligue", name: 'Ligue Marchande', map: '#3f7fd8',
-    colors: ['#2f5d9e', '#e0b43a', '#f4ecd8'], flag: { pattern: 'bicolor-h', emblem: 'coin' },
-    leader: 'Doge Aurelio Venn', motto: '« Tout a un prix. »',
-    lore: "Une alliance de familles marchandes née des cendres de Valmor. La Ligue contrôle les routes du sel " +
-      "et paie des mercenaires pour garder ses caravanes. Elle préfère acheter la paix plutôt que la gagner.",
-    outfit: { body: '#2f5d9e', pants: '#2a2a33', tabard: true },
+// Styles militaires : équipement des troupes et ce que vendent les armuriers
+const CULTURES = {
+  lourd: {
+    camp: false, tabard: true, hat: null,
+    troops: {
+      recrue:  { weapon: ['masse', 'machette'], armor: 'cuir', helmet: 'casque_cuir' },
+      veteran: { weapon: ['hache', 'masse', 'epee'], armor: 'plaques', helmet: 'heaume' },
+      archer:  { weapon: ['dague'], bow: 'arc_court', armor: 'cuir', helmet: 'casque_cuir' },
+    },
+    shop: ['machette', 'masse', 'hache', 'epee', 'cuir', 'mailles', 'plaques', 'casque_cuir', 'casque_fer', 'heaume'],
+  },
+  marchand: {
+    camp: false, tabard: true,
     troops: {
       recrue:  { weapon: ['sabre', 'dague'], armor: 'tunique', helmet: 'turban' },
       veteran: { weapon: ['sabre', 'epee', 'lance'], armor: 'mailles', helmet: 'casque_fer' },
@@ -130,27 +167,8 @@ const FACTION_DEFS = [
     },
     shop: ['dague', 'sabre', 'epee', 'lance', 'arc_court', 'tunique', 'cuir', 'mailles', 'turban', 'casque_cuir', 'casque_fer'],
   },
-  {
-    id: 'clans', art: 'les', of: "des Clans de Fer", name: 'Clans de Fer', map: '#c0392b',
-    colors: ['#2b2b2b', '#b3261e', '#d9d9d9'], flag: { pattern: 'bicolor-v', emblem: 'hammer' },
-    leader: 'Grand-Forgeron Brakka', motto: '« Le fer ne ment pas. »',
-    lore: "Mineurs et forgerons de la montagne noire. Les Clans fabriquent les meilleures armures du désert " +
-      "et méprisent les prêtres d'Ashara, qui ont jadis brûlé leurs forges sacrées.",
-    outfit: { body: '#3a3a3a', pants: '#241c18', tabard: true },
-    troops: {
-      recrue:  { weapon: ['masse', 'machette'], armor: 'cuir', helmet: 'casque_cuir' },
-      veteran: { weapon: ['hache', 'masse'], armor: 'plaques', helmet: 'heaume' },
-      archer:  { weapon: ['dague'], bow: 'arc_court', armor: 'cuir', helmet: 'casque_cuir' },
-    },
-    shop: ['machette', 'masse', 'hache', 'epee', 'cuir', 'mailles', 'plaques', 'casque_cuir', 'casque_fer', 'heaume'],
-  },
-  {
-    id: 'concile', art: 'le', of: "du Concile", name: "Saint Concile d'Ashara", map: '#e8c547',
-    colors: ['#efe6d0', '#d1a12c', '#7a5a1a'], flag: { pattern: 'border', emblem: 'sun' },
-    leader: 'Haute Prêtresse Selune', motto: '« Le soleil voit tout. »',
-    lore: "Une théocratie qui vénère le soleil comme juge suprême. Le Concile croit que la sécheresse " +
-      "punit les pécheurs et veut convertir le désert entier, par la prière ou par l'épée.",
-    outfit: { body: '#efe6d0', pants: '#cbb98f', tabard: true },
+  fanatique: {
+    camp: false, tabard: true,
     troops: {
       recrue:  { weapon: ['lance', 'sabre'], armor: 'robe', helmet: 'turban' },
       veteran: { weapon: ['cimeterre', 'epee'], armor: 'mailles', helmet: 'casque_fer' },
@@ -158,13 +176,8 @@ const FACTION_DEFS = [
     },
     shop: ['lance', 'sabre', 'cimeterre', 'arc_long', 'robe', 'mailles', 'turban', 'casque_fer'],
   },
-  {
-    id: 'nomades', art: 'les', of: "des Nomades", name: 'Nomades du Vent', map: '#3f8f5a',
-    colors: ['#a8743a', '#3f6b4a', '#e8d7b0'], flag: { pattern: 'diagonal', emblem: 'crescent' },
-    leader: 'Khan Oruk le Borgne', motto: '« Le vent ne s\'arrête jamais. »',
-    lore: "Des tribus libres qui suivent les puits au fil des saisons. Archers redoutables, " +
-      "les Nomades commercent avec qui les respecte et disparaissent dans les dunes quand on les menace.",
-    outfit: { body: '#a8743a', pants: '#5a4630', tabard: false },
+  nomade: {
+    camp: true, tabard: false,
     troops: {
       recrue:  { weapon: ['lance', 'dague'], armor: 'tunique', helmet: 'capuche' },
       veteran: { weapon: ['sabre'], bow: 'arc_long', armor: 'cuir', helmet: 'capuche' },
@@ -172,13 +185,17 @@ const FACTION_DEFS = [
     },
     shop: ['dague', 'lance', 'sabre', 'arc_court', 'arc_long', 'tunique', 'cuir', 'capuche'],
   },
-  {
-    id: 'bandits', art: 'les', of: "des Chiens des Dunes", name: 'Chiens des Dunes', map: '#1d1d1d', bandit: true,
-    colors: ['#1f1a17', '#a01e1e', '#e0d0b0'], flag: { pattern: 'plain', emblem: 'skull' },
-    leader: 'Mère Hyène', motto: '« Ce qui est à toi est à nous. »',
-    lore: "Déserteurs, esclaves évadés et assassins. Les Chiens n'ont ni ville ni loi : ils pillent les caravanes " +
-      "et attaquent les voyageurs isolés. On dit que Mère Hyène les dirige depuis les ruines de Valmor.",
-    outfit: { body: '#5a3a2a', pants: '#2d2419', tabard: false },
+  guerrier: {
+    camp: false, tabard: true,
+    troops: {
+      recrue:  { weapon: ['sabre', 'machette', 'lance'], armor: 'tunique', helmet: 'capuche' },
+      veteran: { weapon: ['epee', 'hache', 'masse'], armor: 'mailles', helmet: 'casque_fer' },
+      archer:  { weapon: ['dague'], bow: 'arc_court', armor: 'cuir', helmet: 'casque_cuir' },
+    },
+    shop: ['machette', 'sabre', 'epee', 'lance', 'arc_court', 'tunique', 'cuir', 'mailles', 'capuche', 'casque_cuir', 'casque_fer'],
+  },
+  brigand: {
+    camp: true, tabard: false,
     troops: {
       pillard: { weapon: ['machette', 'baton', 'dague'], armor: 'haillons', helmet: 'bandana' },
       archer:  { weapon: ['dague'], bow: 'arc_court', armor: 'haillons', helmet: 'bandana' },
@@ -186,67 +203,49 @@ const FACTION_DEFS = [
     },
     shop: [],
   },
+};
+
+// Types de gouvernement : nom de la faction et style militaire préféré
+const GOVERNMENTS = [
+  { t: 'Royaume',       art: 'le',  cultures: ['lourd', 'guerrier'] },
+  { t: 'Ligue',         art: 'la',  cultures: ['marchand'] },
+  { t: 'Clans',         art: 'les', cultures: ['lourd', 'guerrier'] },
+  { t: 'Califat',       art: 'le',  cultures: ['fanatique'] },
+  { t: 'République',    art: 'la',  cultures: ['marchand', 'guerrier'] },
+  { t: 'Horde',         art: 'la',  cultures: ['nomade'] },
+  { t: 'Principauté',   art: 'la',  cultures: ['lourd', 'marchand'] },
+  { t: 'Compagnie',     art: 'la',  cultures: ['marchand', 'guerrier'] },
+  { t: 'Théocratie',    art: 'la',  cultures: ['fanatique'] },
+  { t: 'Tribus',        art: 'les', cultures: ['nomade'] },
+  { t: 'Confédération', art: 'la',  cultures: ['guerrier', 'marchand'] },
 ];
+const OF_ART = { le: 'du', la: 'de la', les: 'des', "l'": "de l'" };
 
-// Relations de départ entre factions (le reste est en paix ; les Chiens sont en guerre avec tous)
-const START_WARS = [['clans', 'concile'], ['concile', 'nomades']];
-
-// Villes et camps. produces = marchandise bon marché, demands = marchandise chère.
-const SETTLEMENT_DEFS = [
-  { name: 'Port-Sable',     x: -330, z: -300, faction: 'ligue',   type: 'ville', produces: 'food',   demands: 'spices', capital: true },
-  { name: 'Sel-Amer',       x: -40,  z: -440, faction: 'ligue',   type: 'ville', produces: 'cloth',  demands: 'iron' },
-  { name: 'Forge-Noire',    x: 360,  z: -330, faction: 'clans',   type: 'ville', produces: 'iron',   demands: 'food', capital: true },
-  { name: 'Kharn',          x: 440,  z: 30,   faction: 'clans',   type: 'ville', produces: 'iron',   demands: 'cloth' },
-  { name: 'Oasis-Rouge',    x: 320,  z: 380,  faction: 'concile', type: 'ville', produces: 'spices', demands: 'cloth', capital: true },
-  { name: 'Hautemur',       x: -40,  z: 330,  faction: 'concile', type: 'ville', produces: 'cloth',  demands: 'iron' },
-  { name: 'Camp des Vents', x: -430, z: 140,  faction: 'nomades', type: 'camp',  produces: 'spices', demands: 'iron', capital: true },
-  { name: 'Puits-de-Lune',  x: -350, z: 450,  faction: 'nomades', type: 'camp',  produces: 'food',   demands: 'spices' },
-];
-
-// Ruines de l'Empire (décor + lore)
-const RUINS = [
-  { name: 'Ruines de Valmor', x: 40,   z: -40 },
-  { name: 'Aqueduc brisé',    x: -220, z: -20 },
-  { name: 'Tour des Veilleurs', x: 200, z: 160 },
-];
-
-// Générateurs pour les nouvelles factions et villes
-const NEW_FACTION_PREFIX = { 'Fraternité': 'de la', 'Compagnie': 'de la', 'Horde': 'de la', 'Ordre': "de l'",
-  'Maison': 'de la', 'Confrérie': 'de la', 'Légion': 'de la', 'Royaume': 'du' };
-const NEW_FACTION_SUFFIX = ['des Cendres', 'des Sables Rouges', 'des Lames Brisées', "de l'Aube", 'du Serpent',
-  'des Puits', 'des Oubliés', 'du Croissant Noir', 'de la Dernière Source', 'des Fils de Valmor', 'du Scorpion', 'de la Rose de Sel'];
-const LEADER_FIRST = ['Varek', 'Ilsa', 'Moro', 'Kesh', 'Ardan', 'Nuala', 'Taddeo', 'Zahra', 'Gorm', 'Ysolde', 'Rakim', 'Lior'];
-const LEADER_TITLE = ['Seigneur', 'Dame', 'Capitaine', 'Prophète', 'Baron', 'Reine', 'Chef de guerre', 'Gouverneur'];
-const NEW_PLACE_NAMES = ['Roc-Fendu', 'Dune-Grise', 'Puits-Mort', 'Fort-Cendre', 'Ksar-Ilim', 'Halte-Rouge',
-  'Tour-du-Guet', 'Bastion-Sec', 'Nid-de-Vautour', 'Mirage'];
+// Générateur de noms
+const SYL_START = ['Ka', 'Ra', 'Vel', 'Mor', 'Zan', 'Ul', 'Tor', 'Is', 'An', 'Bar', 'Ash', 'Kel', 'Dra', 'Sil', 'Vor', 'Na',
+  'Ri', 'Thal', 'Gor', 'Em', 'Ys', 'Ok', 'Lun', 'Sa', 'Har', 'Bel', 'Qa', 'Ir', 'Ost', 'Fen', 'Jor', 'Mal', 'Sha', 'Tir'];
+const SYL_MID = ['ra', 'ka', 'du', 'me', 'li', 'zo', 'ta', 'ri', 'na', 'bo', 'se', 'ga', 'ul', 'en', 'ar', 'is', 'o', 'a'];
+const SYL_END = ['dun', 'mor', 'mek', 'is', 'ar', 'an', 'oth', 'ir', 'ash', 'el', 'um', 'ad', 'ek', 'ia', 'or', 'en', 'ath', 'ul', 'esh', 'ine'];
+function genName(rng = Math.random) {
+  let s = rpick(rng, SYL_START);
+  if (rng() < 0.45) s += rpick(rng, SYL_MID);
+  return s + rpick(rng, SYL_END);
+}
+const LEADER_TITLE = ['Seigneur', 'Dame', 'Capitaine', 'Prophète', 'Baron', 'Reine', 'Chef de guerre', 'Gouverneur', 'Khan', 'Doge'];
 const FLAG_PATTERNS = ['plain', 'bicolor-h', 'bicolor-v', 'diagonal', 'cross', 'border'];
 const FLAG_EMBLEMS = ['coin', 'hammer', 'sun', 'crescent', 'skull', 'star', 'tower', 'eye', 'swords', 'triangle'];
-const FACTION_PALETTE = [
-  ['#5b2a6e', '#d9a441', '#f2e6d0', '#9b59b6'],
-  ['#1e6b6b', '#e0e0d0', '#1a1a1a', '#1abc9c'],
-  ['#8c3b1a', '#f0c27a', '#2a1a10', '#e67e22'],
-  ['#3b4d1f', '#c9b458', '#f5f0dc', '#8bc34a'],
-  ['#6b1f3a', '#e8e0d0', '#c9a227', '#e91e63'],
-  ['#2a3550', '#9fc3ff', '#f0f0f0', '#5c7cfa'],
-  ['#4a4a4a', '#e8862a', '#111111', '#ff9800'],
-];
-const GENERIC_TROOPS = {
-  recrue:  { weapon: ['sabre', 'machette', 'lance'], armor: 'tunique', helmet: 'capuche' },
-  veteran: { weapon: ['epee', 'hache', 'masse'], armor: 'mailles', helmet: 'casque_fer' },
-  archer:  { weapon: ['dague'], bow: 'arc_court', armor: 'cuir', helmet: 'casque_cuir' },
-};
 
 // Création du personnage
 const ORIGINS = [
-  { id: 'vagabond', name: 'Vagabond', desc: 'Rien à perdre. 150 💰, une machette, un peu de nourriture.', money: 150,
+  { id: 'vagabond', name: 'Vagabond', desc: '150 💰, une machette, un peu de nourriture.', money: 150,
     goods: { food: 4 }, equip: { weapon: 'machette', armor: 'tunique', helmet: 'capuche' }, bonus: {} },
-  { id: 'marchand', name: 'Marchand ruiné', desc: '400 💰 et du tissu à revendre, mais -1 Force.', money: 400,
+  { id: 'marchand', name: 'Marchand', desc: '400 💰 et du coton à revendre, mais -1 Force.', money: 400,
     goods: { food: 4, cloth: 6 }, equip: { weapon: 'dague', armor: 'tunique', helmet: 'turban' }, bonus: { F: -1 } },
   { id: 'deserteur', name: 'Déserteur', desc: '+1 Force, +1 Endurance. Sabre et cuir, mais 40 💰.', money: 40,
     goods: { food: 3 }, equip: { weapon: 'sabre', armor: 'cuir', helmet: 'casque_cuir' }, bonus: { F: 1, E: 1 } },
-  { id: 'chasseur', name: 'Chasseur des dunes', desc: 'Un arc court et 30 flèches. +1 Agilité. 80 💰.', money: 80,
+  { id: 'chasseur', name: 'Chasseur', desc: 'Un arc court et 30 flèches. +1 Agilité. 80 💰.', money: 80,
     goods: { food: 3, arrows: 30 }, equip: { weapon: 'dague', bow: 'arc_court', armor: 'tunique', helmet: 'capuche' }, bonus: { A: 1 } },
-  { id: 'esclave', name: 'Esclave évadé', desc: '+2 Agilité. Des haillons, pas une pièce. Bonne chance.', money: 0,
+  { id: 'esclave', name: 'Esclave évadé', desc: '+2 Agilité. Des haillons, pas une pièce.', money: 0,
     goods: { food: 1 }, equip: { armor: 'haillons' }, bonus: { A: 2 } },
 ];
 const BODY_COLORS = ['#7a5a3a', '#3d5a7a', '#7a2e2e', '#4a6b3a', '#c9b48a', '#3a3a3a'];

@@ -1,7 +1,12 @@
-// Terres Arides — interface : HUD, ville, inventaire, fouille, carte du monde, création, sauvegarde.
+// Terres Arides — interface : HUD, villes, exploitations, inventaire, fouille, carte, réglages, création, sauvegarde.
 'use strict';
 
 const $ = id => document.getElementById(id);
+
+// ---------- Réglages ----------
+const settings = { sens: 1, invertY: false, directional: false, smooth: true };
+try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (err) { /* réglages par défaut */ }
+function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (err) { /* ignoré */ } }
 
 // ---------- Messages ----------
 function logMsg(text, kind = '') {
@@ -15,12 +20,13 @@ function logMsg(text, kind = '') {
 }
 const floats = [];
 function floatText(pos, text, color) {
+  if (!player || d2(pos, player.pos) > 70) return;
   const el = document.createElement('div');
   el.className = 'float';
   el.textContent = text;
   el.style.color = color;
   $('floats').appendChild(el);
-  floats.push({ el, p: new T.Vector3(pos.x + rand(-0.3, 0.3), pos.y + 2.2, pos.z), t: 1.2 });
+  floats.push({ el, p: new T.Vector3(pos.x + rand(-0.3, 0.3), pos.y + 2.2, pos.z), t: text.length > 6 ? 2.2 : 1.2 });
 }
 const _proj = new T.Vector3();
 function updateFloats(dt) {
@@ -37,17 +43,11 @@ function updateFloats(dt) {
   }
 }
 
-// ---------- Poids et prix ----------
+// ---------- Poids, réputation ----------
 const weightUsed = () => Object.entries(state.goods).reduce((a, [g, n]) => a + GOODS[g].w * n, 0) +
   player.inv.reduce((a, id) => a + (ITEMS[id] ? ITEMS[id].w : 0), 0);
 const weightMax = () => BASE_CARRY + squad().length * CARRY_PER_MEMBER;
 const overloaded = () => player && weightUsed() > weightMax();
-function price(s, g) {
-  const buy = Math.max(1, Math.round(GOODS[g].base * s.mult[g] * s.fluct[g] * (state.allegiance === s.faction ? 0.85 : 1)));
-  return { buy, sell: Math.max(1, Math.round(buy * 0.8)) };
-}
-const itemBuyPrice = (s, id) => Math.round(ITEMS[id].price * (state.allegiance === s.faction ? 0.8 : 1));
-const itemSellPrice = id => Math.max(1, Math.round(ITEMS[id].price * 0.45));
 const recruitCost = () => 80 + 50 * squad().length;
 function repLabel(fid) {
   const f = F(fid);
@@ -60,15 +60,31 @@ function repLabel(fid) {
   return ['Allié', 'good'];
 }
 const relBadge = fid => { const [t, c] = repLabel(fid); return `<span class="badge ${c}">${t} (${Math.round(state.rep[fid] || 0)})</span>`; };
+function sparkline(hist, w = 64, h = 18) {
+  if (!hist || hist.length < 2) return '';
+  const mn = Math.min(...hist), mx = Math.max(...hist), span = mx - mn || 1;
+  const pts = hist.map((v, i) => `${(i / (hist.length - 1) * w).toFixed(1)},${(h - 2 - (v - mn) / span * (h - 4)).toFixed(1)}`).join(' ');
+  const up = hist[hist.length - 1] >= hist[0];
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts}" fill="none" stroke="${up ? '#ff9a7a' : '#8fdc7a'}" stroke-width="1.5"/></svg>`;
+}
+function trend(s, g) {
+  const h = s.hist[g];
+  if (!h || h.length < 2) return '';
+  const now = marketPrice(s, g), before = h[Math.max(0, h.length - 4)];
+  if (now > before * 1.05) return '<span class="bad">▲</span>';
+  if (now < before * 0.95) return '<span class="good">▼</span>';
+  return '<span class="note">=</span>';
+}
 
 // ---------- HUD ----------
 function renderHud() {
   $('money').textContent = state.money;
-  $('food').textContent = state.goods.food;
+  $('food').textContent = Math.floor(state.goods.food);
   $('arrowsCount').textContent = state.goods.arrows;
   $('cargo').textContent = `${Math.round(weightUsed())}/${weightMax()}`;
   $('cargo').parentElement.classList.toggle('bad', overloaded());
   $('day').textContent = state.day;
+  $('biome').textContent = BIOMES[biomeAt(player.pos.x, player.pos.z)].name;
   $('speed').textContent = state.timeScale > 1 ? `⏩ ×${state.timeScale}` : '';
   $('allegiance').innerHTML = state.allegiance ? `${flagImg(F(state.allegiance), 16)} ${esc(F(state.allegiance).name)}` : '';
   $('pName').textContent = player.name;
@@ -79,18 +95,19 @@ function renderHud() {
   $('pWeapon').textContent = w + (player.equip.bow ? ' (X pour changer)' : '');
   const sq = squad();
   $('squadList').innerHTML = sq.length ? sq.map(u => `
-    <div class="member">${esc(u.name)} <small>⚔ ${damageOf(u)} · 🛡 ${armorOf(u)}</small>
+    <div class="member">${esc(u.name)} <small>⚔ ${damageOf(u)} · 🛡 ${armorOf(u)}${u.assignedNode != null ? ' · ⚒ au travail' : ''}</small>
       <div class="bar"><div style="width:${Math.max(0, u.hp / u.maxHp * 100)}%"></div></div></div>`).join('')
     : '<small>Tu voyages seul. Recrute à la taverne.</small>';
   const orders = { follow: 'Ordre : suivez-moi', charge: 'Ordre : chargez !', hold: 'Ordre : tenez la position' };
   $('orderLabel').textContent = sq.length ? orders[state.order] : '';
-  // invite d'action
   const pr = $('prompt');
   let txt = '';
-  if (!state.panel && state.ko <= 0) {
+  if (state.harvest) txt = `Récolte en cours… ${Math.ceil(state.harvest.t)} s`;
+  else if (!state.panel && state.ko <= 0) {
     const corpse = nearCorpse();
     if (corpse) txt = `F : fouiller ${corpse.name}`;
     else if (state.currentTown) txt = `E : entrer dans ${state.currentTown.name}`;
+    else if (state.currentNode) txt = `E : ${RESOURCES[state.currentNode.type].name}`;
   }
   pr.textContent = txt;
   pr.classList.toggle('hidden', !txt);
@@ -108,17 +125,19 @@ function nearCorpse() {
 
 function updateIndicators() {
   const ind = $('dirInd');
-  ind.dataset.dir = player.mode === 'bow' ? '' : mouseDir;
+  ind.dataset.dir = settings.directional && player.mode !== 'bow' ? mouseDir : '';
+  ind.classList.toggle('simple', !settings.directional);
   let threat = null;
-  for (const u of units) {
-    if (!alive(u) || !u.atk || u.atk.hit || u.target !== player) continue;
-    if (d2(u.pos, player.pos) < weaponOf(u).reach + 1.2) { threat = u.atk.dir; break; }
+  if (settings.directional) {
+    for (const u of units) {
+      if (!alive(u) || !u.atk || u.atk.hit || u.target !== player) continue;
+      if (d2(u.pos, player.pos) < weaponOf(u).reach + 1.2) { threat = u.atk.dir; break; }
+    }
   }
-  const th = $('threat');
-  th.textContent = threat ? DIRS[threat] : '';
-  th.dataset.dir = threat || '';
+  $('threat').textContent = threat ? DIRS[threat] : '';
 }
 
+const GOOD_COLORS = { food: '#e8c547', wood: '#8a5a2a', iron: '#9aa0a6', cloth: '#f4f1e8', spices: '#d0452e', salt: '#a8d8f0' };
 function drawMinimap() {
   const m = $('minimap');
   const g = m.getContext('2d');
@@ -128,12 +147,22 @@ function drawMinimap() {
   g.clearRect(0, 0, S, S);
   g.save();
   g.beginPath(); g.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2); g.clip();
-  g.fillStyle = '#b8955c'; g.fillRect(0, 0, S, S);
+  if (!terrainImg || terrainSeed !== state.seed) { terrainImg = buildTerrainImg(); terrainSeed = state.seed; }
+  const sx = (px - R + HALF) / WORLD * 300, sz = (pz - R + HALF) / WORLD * 300, sw = 2 * R / WORLD * 300;
+  g.fillStyle = '#8a7a60'; g.fillRect(0, 0, S, S);
+  g.drawImage(terrainImg, sx, sz, sw, sw, 0, 0, S, S);
+  for (const n of state.nodes) {
+    const [x, y] = toM(n.x, n.z);
+    g.fillStyle = GOOD_COLORS[RESOURCES[n.type].good];
+    g.strokeStyle = n.owner === 'player' ? '#4fc3f7' : '#1a1208';
+    g.lineWidth = n.owner === 'player' ? 2 : 1;
+    g.beginPath(); g.arc(x, y, 3.5, 0, Math.PI * 2); g.fill(); g.stroke();
+  }
   for (const s of state.settlements) {
     const [x, y] = toM(s.x, s.z);
     g.fillStyle = F(s.faction).map;
     g.beginPath(); g.arc(x, y, s.type === 'ville' ? 7 : 5, 0, Math.PI * 2); g.fill();
-    g.strokeStyle = '#1a1208'; g.stroke();
+    g.strokeStyle = '#1a1208'; g.lineWidth = 1.5; g.stroke();
   }
   for (const p of state.parties) {
     if (p.mat) continue;
@@ -142,7 +171,7 @@ function drawMinimap() {
     g.fillRect(x - 2.5, y - 2.5, 5, 5);
   }
   for (const u of units) {
-    if (u.dead || u.isPlayer) continue;
+    if (u.dead || u.isPlayer || u.civil) continue;
     const [x, y] = toM(u.pos.x, u.pos.z);
     g.fillStyle = isPlayerSide(u) ? '#4fc3f7' : hostile(player, u) ? '#e53935' : F(u.faction).map;
     g.fillRect(x - 1.5, y - 1.5, 3, 3);
@@ -154,24 +183,22 @@ function drawMinimap() {
 }
 
 // ---------- Panneaux ----------
+const PANELS = { town: 'town', inv: 'inventory', loot: 'loot', map: 'worldmap', node: 'nodepanel', settings: 'settings' };
 function openPanel(name) {
   state.panel = name;
   if (document.pointerLockElement) document.exitPointerLock();
-  for (const id of ['town', 'inventory', 'loot', 'worldmap']) $(id).classList.add('hidden');
-  const el = $({ town: 'town', inv: 'inventory', loot: 'loot', map: 'worldmap' }[name]);
-  el.classList.remove('hidden');
+  for (const id of Object.values(PANELS)) $(id).classList.add('hidden');
+  $(PANELS[name]).classList.remove('hidden');
   renderPanel();
 }
 function closePanel() {
   state.panel = null;
-  for (const id of ['town', 'inventory', 'loot', 'worldmap']) $(id).classList.add('hidden');
+  for (const id of Object.values(PANELS)) $(id).classList.add('hidden');
 }
 function togglePanel(name) { if (state.panel === name) closePanel(); else openPanel(name); }
 function renderPanel() {
-  if (state.panel === 'town') renderTown();
-  else if (state.panel === 'inv') renderInventory();
-  else if (state.panel === 'loot') renderLoot();
-  else if (state.panel === 'map') renderMap();
+  const r = { town: renderTown, inv: renderInventory, loot: renderLoot, map: renderMap, node: renderNode, settings: renderSettings }[state.panel];
+  if (r) r();
 }
 
 // ---------- Ville ----------
@@ -188,38 +215,40 @@ function renderTown() {
       <p class="note">Va voir l'onglet Faction pour payer une amende.</p>`;
   } else if (state.townTab === 'marche') {
     let rows = '';
-    for (const g in GOODS) {
+    for (const g of [...TRADE_GOODS, 'arrows']) {
       const p = price(s, g);
       const n = g === 'arrows' ? 10 : 1;
-      rows += `<tr><td>${GOODS[g].icon} ${GOODS[g].name}${n > 1 ? ' ×10' : ''}</td><td>${state.goods[g]}</td>
-        <td><button data-buy="${g}" ${state.money < p.buy * n ? 'disabled' : ''}>Acheter ${p.buy * n}</button></td>
+      const stock = g === 'arrows' ? '∞' : Math.floor(s.stock[g]);
+      const canBuy = state.money >= p.buy * n && (g === 'arrows' || s.stock[g] >= 1);
+      rows += `<tr><td>${GOODS[g].icon} ${GOODS[g].name}${n > 1 ? ' ×10' : ''}</td><td class="num">${stock}</td>
+        <td>${g === 'arrows' ? '' : sparkline(s.hist[g]) + ' ' + trend(s, g)}</td><td class="num">${Math.floor(state.goods[g])}</td>
+        <td><button data-buy="${g}" ${canBuy ? '' : 'disabled'}>Acheter ${p.buy * n}</button></td>
         <td><button data-sell="${g}" ${state.goods[g] < n ? 'disabled' : ''}>Vendre ${p.sell * n}</button></td></tr>`;
     }
-    body = `<table><tr><th>Marchandise</th><th>Sac</th><th></th><th></th></tr>${rows}</table>
-      <div class="note">Ici, ${GOODS[s.produces].name.toLowerCase()} est bon marché et ${GOODS[s.demands].name.toLowerCase()} se vend cher. Maj + clic = ×5.</div>`;
+    body = `<table><tr><th>Marchandise</th><th>Stock</th><th>Prix (récent)</th><th>Sac</th><th></th><th></th></tr>${rows}</table>
+      <div class="note">${s.pop | 0} habitants. Le prix monte quand le stock baisse et chute quand on en apporte beaucoup. Maj + clic = ×5.</div>`;
   } else if (state.townTab === 'armurier') {
     const shop = f.shop.length ? f.shop : ['dague', 'machette', 'tunique', 'bandana'];
-    body = `<h4>À vendre</h4><div class="items">${shop.map(id => `
+    body = `<div class="note">Les prix suivent ceux du fer, du bois et du coton de la ville.</div>
+      <h4>À vendre</h4><div class="items">${shop.map(id => `
       <div class="item"><span><b>${ITEMS[id].name}</b><small>${SLOT_NAMES[ITEMS[id].slot]} · ${itemStats(id)}</small></span>
         <button data-buyitem="${id}" ${state.money < itemBuyPrice(s, id) ? 'disabled' : ''}>${itemBuyPrice(s, id)} 💰</button></div>`).join('')}</div>
       <h4>Ton sac</h4><div class="items">${player.inv.length ? player.inv.map((id, i) => `
       <div class="item"><span><b>${ITEMS[id].name}</b><small>${itemStats(id)}</small></span>
-        <button data-sellitem="${i}">Vendre ${itemSellPrice(id)} 💰</button></div>`).join('') : '<small>Rien à vendre. Fouille les corps (F) pour trouver du butin.</small>'}</div>`;
+        <button data-sellitem="${i}">Vendre ${itemSellPrice(id)} 💰</button></div>`).join('') : '<small>Rien à vendre.</small>'}</div>`;
   } else if (state.townTab === 'taverne') {
     const cost = recruitCost();
     const full = squad().length + 1 >= MAX_SQUAD;
     const sworn = state.allegiance === s.faction;
     const rumors = state.chronicle.slice(-3).reverse().map(c => `<li>« ${esc(c.text)} »</li>`).join('');
-    body = `<div class="note">Un mercenaire te suit et se bat pour toi. Escouade : ${squad().length + 1}/${MAX_SQUAD}</div>
+    body = `<div class="note">Un mercenaire te suit, se bat pour toi, ou travaille dans tes exploitations. Escouade : ${squad().length + 1}/${MAX_SQUAD}</div>
       <button data-recruit ${state.money < cost || full ? 'disabled' : ''}>Recruter un mercenaire (${cost} 💰)</button>
       ${sworn ? `<button data-recruitvet ${state.money < 250 || full ? 'disabled' : ''}>Recruter un vétéran ${esc(f.of)} (250 💰)</button>` : ''}
       <button data-rest ${state.money < 10 ? 'disabled' : ''}>Dormir à l'auberge, tout le monde soigné (10 💰)</button>
-      <h4>Rumeurs</h4><ul class="rumors">${rumors || '<li>Rien de neuf.</li>'}</ul>`;
-  } else {
-    body = factionDetail(f, true);
-  }
+      <h4>Nouvelles</h4><ul class="rumors">${rumors || '<li>Rien de neuf.</li>'}</ul>`;
+  } else body = factionDetail(f, true);
   el.innerHTML = `
-    <div class="phead">${flagImg(f, 26)}<div><h3>${esc(s.name)}</h3><small>${s.type === 'camp' ? 'Camp' : 'Ville'} ${esc(f.of)} · garnison ${s.garrison} · 💰 ${state.money}</small></div>
+    <div class="phead">${flagImg(f, 26)}<div><h3>${esc(s.name)}</h3><small>${s.type === 'camp' ? 'Camp' : 'Ville'} ${esc(f.of)} · ${BIOMES[s.biome].name} · garnison ${s.garrison} · 💰 ${state.money}</small></div>
       <button class="x" data-close>✕</button></div>
     <div class="tabs">${tabs.map(([k, n]) => `<button class="${state.townTab === k ? 'on' : ''}" data-tab="${k}">${n}</button>`).join('')}</div>
     <div class="pbody">${body}</div>`;
@@ -228,19 +257,24 @@ function renderTown() {
 function factionDetail(f, inTown) {
   const rels = majorFactions().filter(o => o.id !== f.id)
     .map(o => `<li>${flagImg(o, 14)} ${esc(o.name)} : <span class="badge ${atWar(f.id, o.id) || f.bandit ? 'bad' : 'good'}">${atWar(f.id, o.id) || f.bandit ? 'guerre' : 'paix'}</span></li>`).join('');
-  const towns = settlementsOf(f.id).map(s => s.name).join(', ') || 'aucune';
+  const towns = settlementsOf(f.id);
+  const nodes = state.nodes.filter(n => nodeFaction(n) === f.id);
+  const prod = {};
+  for (const n of nodes) prod[RESOURCES[n.type].good] = (prod[RESOURCES[n.type].good] || 0) + 1;
   const r = state.rep[f.id] || 0;
   let actions = '';
   if (inTown && !f.bandit) {
     if (state.allegiance === f.id) actions = `<button data-leave>Rompre ton serment</button>`;
     else if (!playerHostileTo(f.id)) actions = `<button data-swear ${r < 10 ? 'disabled' : ''}>Prêter serment à ${esc(f.leader)}</button>
-      <div class="note">${r < 10 ? 'Il faut au moins 10 de réputation. Combats ses ennemis ou commerce ici.' : 'Tu porteras ses couleurs. Ses ennemis deviendront les tiens. -20 % chez ses marchands.'}</div>`;
+      <div class="note">${r < 10 ? 'Il faut au moins 10 de réputation. Combats ses ennemis ou commerce ici.' : 'Tu porteras ses couleurs. Ses ennemis deviendront les tiens. Réductions chez ses marchands.'}</div>`;
     if (r < 0) actions += `<button data-fine ${state.money < 150 ? 'disabled' : ''}>Payer une amende (150 💰, +30 réputation)</button>`;
   }
+  const styles = { lourd: 'infanterie lourde', marchand: 'mercenaires', fanatique: 'fanatiques', nomade: 'archers nomades', guerrier: 'guerriers', brigand: 'pillards' };
   return `<div class="fdetail">
-    <div class="fhead">${flagImg(f, 48)}<div><h3>${esc(f.name)}</h3><small>${esc(f.leader)} · ${esc(f.motto)}</small></div></div>
-    <p>${esc(f.lore)}</p>
-    <p class="note">Territoire : ${esc(towns)}${f.founded ? ` · fondée au jour ${f.founded}` : ''}</p>
+    <div class="fhead">${flagImg(f, 48)}<div><h3>${esc(f.name)}</h3><small>${esc(f.leader)} · troupes : ${styles[f.culture] || ''}</small></div></div>
+    <p class="note">${towns.length ? `${towns.length} ${towns.length > 1 ? 'places' : 'place'} : ${esc(towns.map(s => s.name).join(', '))} · ${towns.reduce((a, s) => a + s.pop, 0) | 0} habitants` : 'Aucune ville'}
+      ${nodes.length ? `<br>Exploitations : ${Object.entries(prod).map(([g, n]) => `${GOODS[g].icon}×${n}`).join(' ')}` : ''}
+      ${f.founded ? `<br>Fondée au jour ${f.founded}` : ''}</p>
     <p>Ta réputation : ${relBadge(f.id)}</p>
     <h4>Relations</h4><ul class="rels">${rels || '<li>Aucune.</li>'}</ul>
     ${actions}</div>`;
@@ -255,17 +289,21 @@ $('town').addEventListener('click', e => {
   if ('close' in d) { closePanel(); return; }
   if (d.tab) state.townTab = d.tab;
   else if (d.buy) {
-    const n = d.buy === 'arrows' ? 10 : 1;
+    const g = d.buy, n = g === 'arrows' ? 10 : 1;
     for (let i = 0; i < times; i++) {
-      const p = price(s, d.buy).buy * n;
-      if (state.money < p) break;
-      state.money -= p; state.goods[d.buy] += n; trade(s);
+      const p = price(s, g).buy * n;
+      if (state.money < p || (g !== 'arrows' && s.stock[g] < 1)) break;
+      state.money -= p; state.goods[g] += n;
+      if (g !== 'arrows') s.stock[g] -= 1;
+      trade(s);
     }
   } else if (d.sell) {
-    const n = d.sell === 'arrows' ? 10 : 1;
+    const g = d.sell, n = g === 'arrows' ? 10 : 1;
     for (let i = 0; i < times; i++) {
-      if (state.goods[d.sell] < n) break;
-      state.money += price(s, d.sell).sell * n; state.goods[d.sell] -= n; trade(s);
+      if (state.goods[g] < n) break;
+      state.money += price(s, g).sell * n; state.goods[g] -= n;
+      if (g !== 'arrows') s.stock[g] += 1;
+      trade(s);
     }
   } else if (d.buyitem) {
     const p = itemBuyPrice(s, d.buyitem);
@@ -291,8 +329,7 @@ $('town').addEventListener('click', e => {
 });
 
 function trade(s) {
-  const f = s.faction;
-  if (!F(f).bandit) state.rep[f] = Math.min(25, (state.rep[f] || 0) + 0.3);
+  if (!F(s.faction).bandit) state.rep[s.faction] = Math.min(25, (state.rep[s.faction] || 0) + 0.3);
 }
 
 function recruit(s, veteran) {
@@ -344,6 +381,80 @@ function refreshPlayerDress() {
   for (const u of squad()) dressUnit(u);
 }
 
+// ---------- Exploitations ----------
+function renderNode() {
+  const n = state.currentNode;
+  if (!n) { closePanel(); return; }
+  const R = RESOURCES[n.type], G = GOODS[R.good];
+  const fid = nodeFaction(n);
+  const owner = n.owner === 'player' ? 'Toi' : fid ? `${F(fid).name} (${n.owner})` : 'Personne';
+  const workers = nodeWorkers(n);
+  const idle = squad().filter(a => a.assignedNode == null);
+  let actions = '';
+  if (n.owner === 'player') {
+    actions = `<p>Stock : <b>${Math.floor(n.stock)} ${G.icon} ${G.name}</b> · production ${nodeRate(n).toFixed(1)} / jour</p>
+      <button data-collect ${n.stock < 1 ? 'disabled' : ''}>Ramasser le stock</button>
+      <button data-harvest>Récolter à la main (+2, 3 s)</button>
+      <h4>Ouvriers (${workers.length})</h4>
+      <div class="note">Chaque compagnon posté ici produit ${(R.rate * 0.5).toFixed(1)} ${G.name.toLowerCase()} par jour et défend l'exploitation contre les pillards.</div>
+      <div class="items">${workers.map(a => `<div class="item"><span><b>${esc(a.name)}</b></span><button data-recall="${a.id}">Rappeler</button></div>`).join('')}
+      ${idle.map(a => `<div class="item"><span><b>${esc(a.name)}</b><small>dans ton escouade</small></span><button data-assign="${a.id}">Mettre au travail</button></div>`).join('')}
+      ${!workers.length && !idle.length ? '<small>Recrute des mercenaires à la taverne pour les mettre au travail.</small>' : ''}</div>
+      <button data-abandon>Abandonner l'exploitation</button>`;
+  } else if (fid) {
+    const hostileOwner = playerHostileTo(fid);
+    actions = `<p>Production ${R.rate} ${G.name.toLowerCase()} / jour, livrée à ${esc(n.owner)}.</p>
+      <button data-harvest>Récolter à la main (+2, réputation -4)</button>
+      ${hostileOwner ? '<p class="bad">Cette faction est ton ennemie : impossible de lui acheter.</p>'
+        : `<button data-buynode ${state.money < nodePrice(n) ? 'disabled' : ''}>Racheter l'exploitation (${nodePrice(n)} 💰)</button>
+           <div class="note">${esc(n.owner)} perdra cette production : ses prix vont monter.</div>`}`;
+  } else {
+    actions = `<p>Personne n'exploite ce lieu.</p>
+      <button data-harvest>Récolter à la main (+2, 3 s)</button>
+      <button data-claim ${state.money < 100 ? 'disabled' : ''}>Revendiquer et installer un camp (100 💰)</button>`;
+  }
+  $('nodepanel').innerHTML = `
+    <div class="phead">${flagImg(nodeFlag(n), 26)}<div><h3>${R.name}</h3><small>${G.icon} ${G.name} · ${BIOMES[biomeAt(n.x, n.z)].name} · propriétaire : ${esc(owner)}${n.disabled > 0 ? ' · <span class="bad">à l\'arrêt</span>' : ''}</small></div>
+      <button class="x" data-close>✕</button></div>
+    <div class="pbody">${actions}</div>`;
+}
+$('nodepanel').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  const n = state.currentNode;
+  if (!b || !n) return;
+  const d = b.dataset;
+  if ('close' in d) { closePanel(); return; }
+  const G = RESOURCES[n.type].good;
+  if ('collect' in d) { const q = Math.floor(n.stock); state.goods[G] += q; n.stock -= q; logMsg(`Tu ramasses ${q} ${GOODS[G].name.toLowerCase()}.`); }
+  else if ('harvest' in d) { state.harvest = { node: n, t: 3 }; closePanel(); return; }
+  else if ('buynode' in d) { state.money -= nodePrice(n); const fid = nodeFaction(n); if (fid) state.rep[fid] = (state.rep[fid] || 0) + 3; claimNode(n, true); }
+  else if ('claim' in d) { state.money -= 100; claimNode(n, false); }
+  else if (d.assign) { const a = squad().find(u => u.id === Number(d.assign)); if (a) { a.assignedNode = nodeIndex(n); logMsg(`${a.name} se met au travail.`); } }
+  else if (d.recall) { const a = squad().find(u => u.id === Number(d.recall)); if (a) a.assignedNode = null; }
+  else if ('abandon' in d) {
+    for (const a of nodeWorkers(n)) a.assignedNode = null;
+    const s = nearestSettlement(n);
+    n.owner = s && d2(s, n) < 260 ? s.name : null;
+    refreshNodeFlag(n);
+  }
+  renderNode();
+  renderHud();
+});
+
+function finishHarvest() {
+  const n = state.harvest.node;
+  const g = RESOURCES[n.type].good;
+  state.goods[g] += 2;
+  floatText(player.pos, `+2 ${GOODS[g].icon} ${GOODS[g].name}`, '#ffe9a8');
+  const fid = nodeFaction(n);
+  if (fid && fid !== 'player') {
+    state.rep[fid] = (state.rep[fid] || 0) - 4;
+    if (playerHostileTo(fid)) playerAttacked(fid);
+    else logMsg(`Les ouvriers ${F(fid).of} n'apprécient pas que tu te serves (réputation -4).`, 'warn');
+  }
+  state.harvest = null;
+}
+
 // ---------- Inventaire ----------
 state.invSel = 0;
 function renderInventory() {
@@ -358,7 +469,7 @@ function renderInventory() {
   const bag = player.inv.map((id, i) => `
     <div class="item"><span><b>${ITEMS[id].name}</b><small>${SLOT_NAMES[ITEMS[id].slot]} · ${itemStats(id)} · ${ITEMS[id].w} kg</small></span>
       <span><button data-equip="${i}">Équiper</button> <button data-drop="${i}">Jeter</button></span></div>`).join('');
-  const goods = Object.entries(state.goods).filter(([, n]) => n > 0).map(([g, n]) => `${GOODS[g].icon} ${GOODS[g].name} : ${n}`).join(' · ');
+  const goods = Object.entries(state.goods).filter(([, n]) => n >= 1).map(([g, n]) => `${GOODS[g].icon} ${GOODS[g].name} : ${Math.floor(n)}`).join(' · ');
   $('inventory').innerHTML = `
     <div class="phead"><h3>Inventaire</h3><button class="x" data-close>✕</button></div>
     <div class="tabs">${members.map((m, i) => `<button class="${i === state.invSel ? 'on' : ''}" data-sel="${i}">${esc(m.name)}</button>`).join('')}</div>
@@ -367,7 +478,7 @@ function renderInventory() {
         <div class="statline">❤ ${Math.ceil(u.hp)}/${u.maxHp} · ⚔ ${damageOf(u)} · 🛡 ${armorOf(u)} · 🏃 ${speedOf(u).toFixed(1)}${u.isPlayer ? ` · niv ${u.level}` : ''}</div>
         <div class="items">${slots}</div></div>
       <div><h4>Sac commun <small>${Math.round(weightUsed())}/${weightMax()} kg${overloaded() ? ' — surchargé, vous ralentissez !' : ''}</small></h4>
-        <div class="items">${bag || '<small>Vide. Achète chez l\'armurier ou fouille les corps.</small>'}</div>
+        <div class="items">${bag || '<small>Aucun équipement en réserve.</small>'}</div>
         <p class="note">${goods || 'Aucune marchandise.'}</p></div>
     </div>`;
 }
@@ -375,8 +486,7 @@ $('inventory').addEventListener('click', e => {
   const b = e.target.closest('button');
   if (!b) return;
   const d = b.dataset;
-  const members = [player, ...squad()];
-  const u = members[state.invSel] || player;
+  const u = [player, ...squad()][state.invSel] || player;
   if ('close' in d) { closePanel(); return; }
   if (d.sel) state.invSel = Number(d.sel);
   else if (d.equip) {
@@ -404,15 +514,13 @@ function renderLoot() {
   const goods = Object.entries(l.goods).filter(([, n]) => n > 0);
   $('loot').innerHTML = `
     <div class="phead"><h3>Corps : ${esc(c.name)}</h3><button class="x" data-close>✕</button></div>
-    <div class="pbody">
-      <div class="items">
+    <div class="pbody"><div class="items">
         ${l.coins ? `<div class="item"><span><b>💰 ${l.coins} pièces</b></span><button data-coins>Prendre</button></div>` : ''}
         ${goods.map(([g, n]) => `<div class="item"><span><b>${GOODS[g].icon} ${GOODS[g].name} ×${n}</b></span><button data-good="${g}">Prendre</button></div>`).join('')}
         ${l.items.map((id, i) => `<div class="item"><span><b>${ITEMS[id].name}</b><small>${SLOT_NAMES[ITEMS[id].slot]} · ${itemStats(id)}</small></span><button data-item="${i}">Prendre</button></div>`).join('')}
         ${lootEmpty(l) ? '<small>Il ne reste rien.</small>' : ''}
       </div>
-      <button data-all ${lootEmpty(l) ? 'disabled' : ''}>Tout prendre</button>
-    </div>`;
+      <button data-all ${lootEmpty(l) ? 'disabled' : ''}>Tout prendre</button></div>`;
 }
 $('loot').addEventListener('click', e => {
   const b = e.target.closest('button');
@@ -435,7 +543,7 @@ $('loot').addEventListener('click', e => {
 // ---------- Carte du monde ----------
 state.mapTab = 'factions';
 state.mapSel = null;
-let terrainImg = null, territoryImg = null, territoryKey = '';
+let terrainImg = null, terrainSeed = -1, territoryImg = null, territoryKey = '';
 const MAPRES = 150;
 function buildTerrainImg() {
   const cv = document.createElement('canvas');
@@ -444,10 +552,10 @@ function buildTerrainImg() {
   const img = g.createImageData(300, 300);
   for (let j = 0; j < 300; j++) for (let i = 0; i < 300; i++) {
     const x = -HALF + (i + 0.5) / 300 * WORLD, z = -HALF + (j + 0.5) / 300 * WORLD;
-    const h = heightAt(x, z), k = clamp((h + 12) / 24, 0, 1);
-    const shade = 1 + (heightAt(x + 4, z + 4) - h) * -0.06;
+    const h = heightAt(x, z), b = BIOMES[biomeAt(x, z)].color;
+    const shade = clamp(1 + (heightAt(x + 4, z + 4) - h) * -0.05, 0.6, 1.3);
     const o = (j * 300 + i) * 4;
-    img.data[o] = (160 + k * 50) * shade; img.data[o + 1] = (125 + k * 42) * shade; img.data[o + 2] = (80 + k * 26) * shade; img.data[o + 3] = 255;
+    img.data[o] = b[0] * 255 * shade; img.data[o + 1] = b[1] * 255 * shade; img.data[o + 2] = b[2] * 255 * shade; img.data[o + 3] = 255;
   }
   g.putImageData(img, 0, 0);
   return cv;
@@ -458,13 +566,10 @@ function buildTerritoryImg() {
   const g = cv.getContext('2d');
   const img = g.createImageData(MAPRES, MAPRES);
   const col = {};
-  for (const f of Object.values(state.factions)) {
-    const c = new T.Color(f.map);
-    col[f.id] = [c.r * 255, c.g * 255, c.b * 255];
-  }
+  for (const f of Object.values(state.factions)) { const c = new T.Color(f.map); col[f.id] = [c.r * 255, c.g * 255, c.b * 255]; }
   for (let j = 0; j < MAPRES; j++) for (let i = 0; i < MAPRES; i++) {
     const x = -HALF + (i + 0.5) / MAPRES * WORLD, z = -HALF + (j + 0.5) / MAPRES * WORLD;
-    let best = null, bd = 180, second = Infinity;
+    let best = null, bd = 200, second = Infinity;
     for (const s of state.settlements) {
       const d = Math.hypot(x - s.x, z - s.z);
       if (d < bd) { second = bd; bd = d; best = s; } else if (d < second) second = d;
@@ -472,9 +577,9 @@ function buildTerritoryImg() {
     if (!best) continue;
     const o = (j * MAPRES + i) * 4;
     const [r, gg, b] = col[best.faction];
-    const border = second - bd < 6 && second < 180;
+    const border = second - bd < 6 && second < 200;
     img.data[o] = r; img.data[o + 1] = gg; img.data[o + 2] = b;
-    img.data[o + 3] = border ? 150 : 70 * (1 - bd / 180) + 25;
+    img.data[o + 3] = border ? 170 : 55 * (1 - bd / 200) + 15;
   }
   g.putImageData(img, 0, 0);
   return cv;
@@ -484,47 +589,41 @@ function renderMap() {
   const el = $('worldmap');
   if (!el.dataset.built) {
     el.dataset.built = '1';
-    el.innerHTML = `<div class="mapwrap"><canvas id="mapCanvas"></canvas><div class="maplegend">
-      <span><i class="dot me"></i> Toi</span><span><i class="sq"></i> Ville</span><span><i class="tri"></i> Camp</span>
-      <span><i class="dot"></i> Patrouille / caravane</span><span><i class="big"></i> Armée</span><span>Clique une ville pour voir sa faction</span></div></div>
-      <div class="mapside"><div class="phead"><h3>Terres Arides</h3><button class="x" data-close>✕</button></div>
+    el.innerHTML = `<div class="mapwrap"><canvas id="mapCanvas"></canvas><div class="maplegend" id="mapLegend"></div></div>
+      <div class="mapside"><div class="phead"><h3>Carte du monde</h3><button class="x" data-close>✕</button></div>
       <div class="tabs" id="mapTabs"></div><div class="pbody" id="mapSide"></div></div>`;
     $('mapCanvas').addEventListener('click', mapClick);
+    $('mapLegend').innerHTML = Object.values(BIOMES).map(b => `<span><i style="background:rgb(${b.color.map(c => c * 255 | 0).join(',')})"></i> ${b.name}</span>`).join('') +
+      Object.entries(RESOURCES).map(([, r]) => `<span><i class="dot" style="background:${GOOD_COLORS[r.good]}"></i> ${r.name}</span>`).join('') +
+      '<span><i class="dot me"></i> Toi</span><span>■ Ville ▲ Camp ◆ Caravane ● Armée</span>';
   }
   drawWorldMap();
   renderMapSide();
 }
-
 function mapLayout() {
   const cv = $('mapCanvas');
   const rect = cv.parentElement.getBoundingClientRect();
-  const size = Math.max(200, Math.min(rect.width, rect.height - 34));
-  return { cv, size };
+  return { cv, size: Math.max(200, Math.min(rect.width, rect.height - 60)) };
 }
-
 function drawWorldMap() {
   const { cv, size } = mapLayout();
-  if (cv.width !== Math.round(size)) { cv.width = cv.height = Math.round(size); }
+  if (cv.width !== Math.round(size)) cv.width = cv.height = Math.round(size);
   const g = cv.getContext('2d');
   const S = cv.width, k = S / WORLD;
   const toM = (x, z) => [(x + HALF) * k, (z + HALF) * k];
-  if (!terrainImg) terrainImg = buildTerrainImg();
-  const key = state.settlements.map(s => s.name + s.faction).join() + Object.values(state.factions).map(f => f.map).join();
+  if (!terrainImg || terrainSeed !== state.seed) { terrainImg = buildTerrainImg(); terrainSeed = state.seed; }
+  const key = state.seed + state.settlements.map(s => s.name + s.faction).join();
   if (key !== territoryKey) { territoryImg = buildTerritoryImg(); territoryKey = key; }
   g.imageSmoothingEnabled = true;
   g.drawImage(terrainImg, 0, 0, S, S);
   g.drawImage(territoryImg, 0, 0, S, S);
-  // ruines
-  g.font = `italic ${Math.max(10, S / 70)}px system-ui`;
-  g.textAlign = 'center';
-  for (const r of RUINS) {
-    const [x, y] = toM(r.x, r.z);
-    g.fillStyle = '#6b5e4a';
-    g.fillRect(x - 3, y - 3, 6, 6);
-    g.fillStyle = 'rgba(40,30,20,.85)';
-    g.fillText(r.name, x, y + 14);
+  for (const n of state.nodes) {
+    const [x, y] = toM(n.x, n.z);
+    g.fillStyle = GOOD_COLORS[RESOURCES[n.type].good];
+    g.strokeStyle = n.owner === 'player' ? '#4fc3f7' : '#1a1208';
+    g.lineWidth = n.owner === 'player' ? 2.5 : 1;
+    g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2); g.fill(); g.stroke();
   }
-  // groupes
   for (const p of state.parties) {
     const [x, y] = toM(p.x, p.z);
     const f = F(p.faction);
@@ -532,21 +631,19 @@ function drawWorldMap() {
     g.strokeStyle = '#1a1208'; g.lineWidth = 1;
     if (p.kind === 'army') {
       g.beginPath(); g.arc(x, y, 6, 0, Math.PI * 2); g.fill(); g.stroke();
-      const t = state.settlements.find(s => s.name === p.target);
+      const t = settlementByName(p.target);
       if (t) {
         const [tx, ty] = toM(t.x, t.z);
         g.setLineDash([4, 4]); g.strokeStyle = f.map; g.lineWidth = 2;
         g.beginPath(); g.moveTo(x, y); g.lineTo(tx, ty); g.stroke(); g.setLineDash([]);
       }
-      if (f._flagCanvas) g.drawImage(f._flagCanvas, x + 4, y - 16, 15, 10);
     } else if (p.kind === 'caravan') {
       g.beginPath(); g.moveTo(x, y - 4); g.lineTo(x + 4, y); g.lineTo(x, y + 4); g.lineTo(x - 4, y); g.fill(); g.stroke();
-    } else {
-      g.beginPath(); g.arc(x, y, 3.2, 0, Math.PI * 2); g.fill(); g.stroke();
-    }
+      if (p.cargo) { g.fillStyle = GOOD_COLORS[p.cargo.good]; g.fillRect(x - 1.5, y - 1.5, 3, 3); }
+    } else { g.beginPath(); g.arc(x, y, 3.2, 0, Math.PI * 2); g.fill(); g.stroke(); }
   }
-  // villes
   g.font = `bold ${Math.max(11, S / 60)}px system-ui`;
+  g.textAlign = 'center';
   for (const s of state.settlements) {
     const [x, y] = toM(s.x, s.z);
     const f = F(s.faction);
@@ -559,14 +656,12 @@ function drawWorldMap() {
     g.fillStyle = '#fff4dc'; g.strokeStyle = 'rgba(20,14,8,.9)'; g.lineWidth = 3;
     g.strokeText(s.name, x, y + 22); g.fillText(s.name, x, y + 22);
   }
-  // joueur
   const [px, py] = toM(player.pos.x, player.pos.z);
   g.save(); g.translate(px, py); g.rotate(-player.yaw);
   g.fillStyle = '#fff'; g.strokeStyle = '#000'; g.lineWidth = 1.5;
   g.beginPath(); g.moveTo(0, 9); g.lineTo(6, -6); g.lineTo(-6, -6); g.closePath(); g.fill(); g.stroke();
   g.restore();
 }
-
 function mapClick(e) {
   const { cv } = mapLayout();
   const r = cv.getBoundingClientRect();
@@ -574,9 +669,8 @@ function mapClick(e) {
   const s = nearestSettlement({ x, z });
   if (s && d2(s, { x, z }) < 40) { state.mapSel = s.faction; state.mapTab = 'factions'; renderMapSide(); }
 }
-
 function renderMapSide() {
-  const tabs = [['factions', 'Factions'], ['chroniques', 'Chroniques'], ['histoire', 'Histoire']];
+  const tabs = [['factions', 'Factions'], ['economie', 'Économie'], ['chroniques', 'Chroniques']];
   $('mapTabs').innerHTML = tabs.map(([k, n]) => `<button class="${state.mapTab === k ? 'on' : ''}" data-mtab="${k}">${n}</button>`).join('');
   let html = '';
   if (state.mapTab === 'factions') {
@@ -591,13 +685,23 @@ function renderMapSide() {
           <small class="wars">${f.bandit ? 'En guerre contre tout le monde' : wars.length ? '⚔ ' + esc(wars.join(', ')) : '🕊 En paix'}</small></div></div>`;
       }).join('');
     }
-  } else if (state.mapTab === 'chroniques') {
-    html = `<ul class="chron">${[...state.chronicle].reverse().map(c => `<li><span>Jour ${c.day}</span> ${c.icon} ${esc(c.text)}</li>`).join('')}</ul>`;
+  } else if (state.mapTab === 'economie') {
+    const head = TRADE_GOODS.map(g => `<th title="${GOODS[g].name}">${GOODS[g].icon}</th>`).join('');
+    const rows = state.settlements.map(s => `<tr><td>${flagImg(F(s.faction), 12)} ${esc(s.name)}<small> ${s.pop | 0} hab.</small></td>${TRADE_GOODS.map(g => {
+      const p = marketPrice(s, g), r = p / GOODS[g].base;
+      return `<td class="num ${r < 0.8 ? 'good' : r > 1.4 ? 'bad' : ''}">${p}</td>`;
+    }).join('')}</tr>`).join('');
+    const trades = [...state.trades].reverse().slice(0, 25).map(t => {
+      const f = F(t.faction);
+      return t.kind === 'achat'
+        ? `<li><span>Jour ${t.day}</span>${f ? flagImg(f, 12) : ''} Une caravane achète ${t.qty} ${GOODS[t.good].icon} à ${esc(t.where)} (${t.price} 💰) pour ${esc(t.to)}</li>`
+        : `<li><span>Jour ${t.day}</span>${f ? flagImg(f, 12) : ''} Une caravane vend ${t.qty} ${GOODS[t.good].icon} à ${esc(t.where)} (${t.price} 💰), bénéfice ${t.profit >= 0 ? '+' : ''}${t.profit} 💰</li>`;
+    }).join('');
+    html = `<p class="note">Prix actuels. <span class="good">Vert</span> = bon marché, <span class="bad">rouge</span> = cher. Achète là où c'est vert, revends là où c'est rouge.</p>
+      <div class="scroll-x"><table class="eco"><tr><th></th>${head}</tr>${rows}</table></div>
+      <h4>Derniers échanges</h4><ul class="chron">${trades || '<li>Aucun échange pour l\'instant.</li>'}</ul>`;
   } else {
-    const dead = Object.values(state.factions).filter(f => !f.alive);
-    html = WORLD_LORE.map(p => `<p>${esc(p)}</p>`).join('') +
-      `<h4>Lieux de l'Empire déchu</h4><ul>${RUINS.map(r => `<li>${esc(r.name)}</li>`).join('')}</ul>` +
-      (dead.length ? `<h4>Factions disparues</h4><ul>${dead.map(f => `<li>${flagImg(f, 14)} ${esc(f.name)} (jour ${f.died})</li>`).join('')}</ul>` : '');
+    html = `<ul class="chron">${[...state.chronicle].reverse().map(c => `<li><span>Jour ${c.day}</span> ${c.icon} ${esc(c.text)}</li>`).join('')}</ul>`;
   }
   $('mapSide').innerHTML = html;
 }
@@ -612,25 +716,47 @@ $('worldmap').addEventListener('click', e => {
   renderMapSide();
 });
 
+// ---------- Réglages ----------
+function renderSettings() {
+  $('settings').innerHTML = `
+    <div class="phead"><h3>Réglages</h3><button class="x" data-close>✕</button></div>
+    <div class="pbody">
+      <label class="row">Sensibilité de la souris <input id="sSens" type="range" min="0.2" max="2.5" step="0.05" value="${settings.sens}"> <b id="sSensV">${settings.sens.toFixed(2)}</b></label>
+      <label class="row"><input id="sInv" type="checkbox" ${settings.invertY ? 'checked' : ''}> Inverser l'axe vertical</label>
+      <label class="row"><input id="sSmooth" type="checkbox" ${settings.smooth ? 'checked' : ''}> Caméra lissée</label>
+      <label class="row"><input id="sDir" type="checkbox" ${settings.directional ? 'checked' : ''}> Combat directionnel (la souris choisit la direction des coups et des parades, comme Mount & Blade)</label>
+      <p class="note">Sans combat directionnel : clic gauche pour enchaîner les coups, clic droit maintenu pour parer dans toutes les directions.</p>
+    </div>`;
+}
+$('settings').addEventListener('input', e => {
+  if (e.target.id === 'sSens') { settings.sens = Number(e.target.value); $('sSensV').textContent = settings.sens.toFixed(2); }
+  if (e.target.id === 'sInv') settings.invertY = e.target.checked;
+  if (e.target.id === 'sDir') settings.directional = e.target.checked;
+  if (e.target.id === 'sSmooth') settings.smooth = e.target.checked;
+  saveSettings();
+});
+$('settings').addEventListener('click', e => { if (e.target.closest('[data-close]')) closePanel(); });
+
 // ---------- Sauvegarde ----------
 function unitSave(u) {
   return { name: u.name, look: u.look, equip: u.equip, inv: u.inv || [], hp: Math.max(1, Math.round(u.hp)), maxHp: u.maxHp,
     str: u.str, agi: u.agi, speed: u.speedBase, level: u.level, xp: u.xp, x: u.pos.x, z: u.pos.z, arrows: u.arrows,
-    archer: !!u.archer, sworn: !!u.sworn, stats: u.stats };
+    archer: !!u.archer, sworn: !!u.sworn, stats: u.stats, node: u.assignedNode };
 }
 function saveGame(silent) {
   if (state.mode !== 'play' || state.ko > 0) return false;
   const strip = f => { const o = {}; for (const k in f) if (!k.startsWith('_')) o[k] = f[k]; return o; };
   const data = {
-    v: 1, uid: _uid, player: unitSave(player), squad: squad().map(unitSave),
+    v: 2, seed: state.seed, uid: _uid, player: unitSave(player), squad: squad().map(unitSave),
     money: state.money, goods: state.goods, day: state.day, dayTimer: state.dayTimer, kills: state.kills, order: state.order,
     rep: state.rep, allegiance: state.allegiance, relations: state.relations, warSince: state.warSince, clock: state.clock || 0,
     factions: Object.values(state.factions).map(strip),
     settlements: state.settlements.map(s => ({ name: s.name, x: s.x, z: s.z, faction: s.faction, type: s.type, capital: s.capital,
-      isNew: s.isNew, produces: s.produces, demands: s.demands, garrison: s.garrison, fluct: s.fluct })),
+      garrison: s.garrison, pop: s.pop, stock: s.stock, hist: s.hist })),
+    nodes: state.nodes.map(n => ({ owner: n.owner, stock: n.stock, disabled: n.disabled })),
     parties: state.parties.map(p => ({ faction: p.faction, kind: p.kind, x: p.x, z: p.z, troops: partyTroops(p), dest: p.dest,
-      home: p.home, target: p.target })),
-    chronicle: state.chronicle, saved: Date.now(),
+      home: p.home, target: p.target, cargo: p.cargo || null })),
+    chronicle: state.chronicle, trades: state.trades, saved: Date.now(),
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -646,22 +772,30 @@ function readSave() {
 }
 
 function loadGame(data) {
+  if (state.seed !== data.seed) { if (player) { removeUnit(player); player = null; } generateWorld(data.seed); }
   _uid = Math.max(_uid, data.uid || 1);
   state.factions = {};
   for (const f of data.factions) state.factions[f.id] = f;
   Object.assign(state, {
     money: data.money, goods: { ...state.goods, ...data.goods }, day: data.day, dayTimer: data.dayTimer, kills: data.kills,
     order: data.order || 'follow', rep: data.rep, allegiance: data.allegiance, relations: data.relations,
-    warSince: data.warSince || {}, clock: data.clock || 0, chronicle: data.chronicle || [],
+    warSince: data.warSince || {}, clock: data.clock || 0, chronicle: data.chronicle || [], trades: data.trades || [],
   });
   for (const sd of data.settlements) {
-    const s = state.settlements.find(o => o.name === sd.name);
-    if (s) { setOwner(s, sd.faction); Object.assign(s, { capital: sd.capital, garrison: sd.garrison, fluct: sd.fluct }); }
-    else makeSettlement(sd, true);
+    const s = settlementByName(sd.name);
+    if (s) { Object.assign(s, { capital: sd.capital, garrison: sd.garrison, pop: sd.pop, stock: sd.stock, hist: sd.hist || {} }); setOwner(s, sd.faction); }
+    else makeSettlement(sd);
   }
+  data.nodes.forEach((nd, i) => {
+    const n = state.nodes[i];
+    if (!n) return;
+    Object.assign(n, nd);
+    refreshNodeFlag(n);
+  });
   for (const pd of data.parties) {
     if (!F(pd.faction) || !pd.troops.length) continue;
-    makeParty(pd.faction, pd.kind, pd.x, pd.z, pd.troops, { dest: pd.dest, home: pd.home, target: pd.target });
+    const p = makeParty(pd.faction, pd.kind, pd.x, pd.z, pd.troops, { dest: pd.dest, home: pd.home, target: pd.target });
+    p.cargo = pd.cargo;
   }
   if (player) removeUnit(player);
   player = createPlayer(data.player);
@@ -669,11 +803,11 @@ function loadGame(data) {
   for (const m of data.squad) {
     const u = makeUnit({ faction: 'player', x: m.x, z: m.z, name: m.name, look: m.look, equip: m.equip, hp: m.hp, maxHp: m.maxHp,
       str: m.str, agi: m.agi, speed: m.speed, level: m.level, xp: m.xp, arrows: m.arrows, blockChance: 0.3 });
-    u.archer = m.archer; u.sworn = m.sworn;
+    u.archer = m.archer; u.sworn = m.sworn; u.assignedNode = m.node != null ? m.node : null;
     dressUnit(u);
   }
+  PLAYER_FLAG.colors[0] = player.look.body;
 }
-
 function createPlayer(d) {
   const p = makeUnit({ faction: 'player', isPlayer: true, x: d.x, z: d.z, name: d.name, look: d.look, equip: d.equip,
     hp: d.hp, maxHp: d.maxHp, str: d.str, agi: d.agi, speed: d.speed, level: d.level, xp: d.xp, stats: d.stats });
@@ -690,12 +824,11 @@ function finalStats() {
   for (const k in creation.origin.bonus) s[k] += creation.origin.bonus[k];
   return s;
 }
+const startTown = () => state.settlements.find(s => s.capital && s.type === 'ville') || state.settlements[0];
 function previewPlayer() {
-  const start = state.settlements[0];
-  const g = gatePos(start, 6);
-  const pos = player ? { x: player.pos.x, z: player.pos.z } : g;
+  const g = gatePos(startTown(), 6);
   if (player) removeUnit(player);
-  player = makeUnit({ faction: 'player', isPlayer: true, x: pos.x, z: pos.z, name: creation.name,
+  player = makeUnit({ faction: 'player', isPlayer: true, x: g.x, z: g.z, name: creation.name,
     look: { body: creation.body, skin: creation.skin, height: creation.height, pants: '#3b2f22' },
     equip: { ...creation.origin.equip } });
   player.inv = [];
@@ -718,6 +851,9 @@ function renderCreation() {
   const save = readSave();
   $('cContinue').classList.toggle('hidden', !save);
   if (save) $('cContinue').textContent = `Continuer : ${save.player.name}, jour ${save.day}`;
+  const majors = majorFactions();
+  $('cWorld').innerHTML = `Monde n° ${state.seed} · ${majors.length} factions · ${state.settlements.length} places · ${state.nodes.length} exploitations
+    <div class="wflags">${majors.map(f => flagImg(f, 16) + ' ' + esc(f.name)).join('<br>')}</div>`;
 }
 $('creation').addEventListener('click', e => {
   const el = e.target.closest('[data-origin],[data-body],[data-skin],[data-plus],[data-minus]');
@@ -733,17 +869,23 @@ $('creation').addEventListener('click', e => {
 });
 $('cName').addEventListener('input', e => { creation.name = e.target.value.trim(); });
 $('cHeight').addEventListener('input', e => { creation.height = Number(e.target.value); previewPlayer(); });
+const randomSeed = () => Math.floor(Math.random() * 99999) + 1;
+$('cReroll').addEventListener('click', () => {
+  if (player) { removeUnit(player); player = null; }
+  generateWorld(randomSeed());
+  previewPlayer();
+  renderCreation();
+});
 
 function enterPlay() {
   state.mode = 'play';
   $('creation').classList.add('hidden');
   $('hud').classList.remove('hidden');
 }
-
 function startNewGame() {
   previewPlayer();
   const s = finalStats();
-  const start = state.settlements[0];
+  const start = startTown();
   const g = gatePos(start, 6);
   Object.assign(player, {
     name: creation.name || 'Sans-nom', stats: s, str: Math.round(s.F * 1.2), agi: s.A,
@@ -752,16 +894,14 @@ function startNewGame() {
   player.hp = player.maxHp;
   player.pos.set(g.x, heightAt(g.x, g.z), g.z);
   state.money = creation.origin.money;
+  for (const k in state.goods) state.goods[k] = 0;
   Object.assign(state.goods, creation.origin.goods);
+  PLAYER_FLAG.colors[0] = creation.body;
   cam.yaw = Math.atan2(Math.cos(start.gate), Math.sin(start.gate));
   player.yaw = cam.yaw;
   enterPlay();
   populateWorld();
-  $('intro').classList.remove('hidden');
-  $('introText').innerHTML = WORLD_LORE.map(p => `<p>${esc(p)}</p>`).join('') +
-    `<p><b>${esc(player.name)}</b>, ${esc(creation.origin.name.toLowerCase())}, arrive à ${start.name} avec ${state.money} 💰.</p>`;
-  state.panel = 'intro';
-  logMsg('Appuie sur M pour la carte du monde, I pour l\'inventaire.');
+  logMsg(`${player.name} arrive à ${start.name}. M : carte · I : inventaire · E : interagir · O : réglages.`);
 }
 $('cStart').addEventListener('click', startNewGame);
 $('cContinue').addEventListener('click', () => {
@@ -772,7 +912,8 @@ $('cContinue').addEventListener('click', () => {
   enterPlay();
   logMsg(`Bon retour, ${player.name}. Jour ${state.day}.`);
 });
-$('introGo').addEventListener('click', () => { $('intro').classList.add('hidden'); state.panel = null; });
 $('saveBtn').addEventListener('click', () => saveGame(false));
 $('mapBtn').addEventListener('click', () => togglePanel('map'));
 $('invBtn').addEventListener('click', () => togglePanel('inv'));
+$('setBtn').addEventListener('click', () => togglePanel('settings'));
+$('cSettings').addEventListener('click', () => { openPanel('settings'); });
