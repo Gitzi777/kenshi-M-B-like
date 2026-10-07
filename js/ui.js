@@ -4,7 +4,7 @@
 const $ = id => document.getElementById(id);
 
 // ---------- Réglages ----------
-const settings = { sens: 1, invertY: false, directional: false, smooth: true };
+const settings = { sens: 1, invertY: false, directional: false, smooth: true, camMode: 'tps' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (err) { /* réglages par défaut */ }
 function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (err) { /* ignoré */ } }
 
@@ -45,7 +45,7 @@ function updateFloats(dt) {
 
 // ---------- Poids, réputation ----------
 const weightUsed = () => Object.entries(state.goods).reduce((a, [g, n]) => a + GOODS[g].w * n, 0) +
-  player.inv.reduce((a, id) => a + (ITEMS[id] ? ITEMS[id].w : 0), 0);
+  player.inv.reduce((a, id) => a + (IT(id) ? IT(id).w : 0), 0);
 const weightMax = () => BASE_CARRY + squad().length * CARRY_PER_MEMBER;
 const overloaded = () => player && weightUsed() > weightMax();
 const recruitCost = () => 80 + 50 * squad().length;
@@ -85,9 +85,9 @@ function renderHud() {
   $('cargo').parentElement.classList.toggle('bad', overloaded());
   $('day').textContent = state.day;
   $('biome').textContent = BIOMES[biomeAt(player.pos.x, player.pos.z)].name;
-  $('speed').textContent = state.timeScale > 1 ? `⏩ ×${state.timeScale}` : '';
+  $('speed').textContent = [state.run ? '🏃 Course' : '', state.timeScale > 1 ? `⏩ ×${state.timeScale}` : '', state.storm > 0 ? '🌪 Tempête' : '', settings.camMode === 'rts' ? '🎥 Vue tactique' : ''].filter(Boolean).join(' · ');
   $('allegiance').innerHTML = state.allegiance ? `${flagImg(F(state.allegiance), 16)} ${esc(F(state.allegiance).name)}` : '';
-  $('pName').textContent = player.name;
+  $('pName').textContent = player.name + (metier(player) ? ` · ${metier(player)}` : '');
   $('pLevel').textContent = `niv ${player.level} · ⚔ ${damageOf(player)} · 🛡 ${armorOf(player)}`;
   $('pHp').style.width = Math.max(0, player.hp / player.maxHp * 100) + '%';
   $('pHpText').textContent = `${Math.ceil(Math.max(0, player.hp))} / ${player.maxHp} PV`;
@@ -95,23 +95,35 @@ function renderHud() {
   $('pWeapon').textContent = w + (player.equip.bow ? ' (X pour changer)' : '');
   const sq = squad();
   $('squadList').innerHTML = sq.length ? sq.map(u => `
-    <div class="member">${esc(u.name)} <small>⚔ ${damageOf(u)} · 🛡 ${armorOf(u)}${u.assignedNode != null ? ' · ⚒ au travail' : ''}</small>
-      <div class="bar"><div style="width:${Math.max(0, u.hp / u.maxHp * 100)}%"></div></div></div>`).join('')
+    <div class="member ${state.selected && state.selected.includes(u) ? 'sel' : ''}" data-ctl="${u.id}" title="Clic : prendre le contrôle">${esc(u.name)}
+      <small>${u.down > 0 ? '💤 à terre' : `⚔ ${damageOf(u)} · 🛡 ${armorOf(u)}`}${u.assignedNode != null ? ' · ⚒ au travail' : ''}${u.cmd ? ' · 📍 ordre' : ''}${metier(u) ? ' · ' + metier(u) : ''}</small>
+      <div class="bar"><div style="width:${Math.max(0, u.hp / u.maxHp * 100)}%"></div></div></div>`).join('') +
+      '<small class="note">Clic sur un nom ou C : changer de personnage</small>'
     : '<small>Tu voyages seul. Recrute à la taverne.</small>';
-  const orders = { follow: 'Ordre : suivez-moi', charge: 'Ordre : chargez !', hold: 'Ordre : tenez la position' };
-  $('orderLabel').textContent = sq.length ? orders[state.order] : '';
+  const orders = { follow: 'Suivre', charge: 'Charger', hold: 'Tenir', close: 'Groupés' };
+  $('ordersBar').innerHTML = sq.length ? Object.entries({ 1: 'follow', 2: 'charge', 3: 'hold', 4: 'close' }).map(([k, o]) =>
+    `<span class="${state.order === o ? 'on' : ''}"><b>${k}</b> ${orders[o]}</span>`).join('') + '<span><b>5</b> Attaquer ma cible</span><span><b>V</b> Vue tactique</span>' : '';
+  $('orderLabel').textContent = '';
   const pr = $('prompt');
   let txt = '';
   if (state.harvest) txt = `Récolte en cours… ${Math.ceil(state.harvest.t)} s`;
   else if (!state.panel && state.ko <= 0) {
     const corpse = nearCorpse();
     if (corpse) txt = `F : fouiller ${corpse.name}`;
-    else if (state.currentTown) txt = `E : entrer dans ${state.currentTown.name}`;
+    else if (state.currentService) txt = `E : ${state.currentService.name}`;
+    else if (state.currentTown && state.currentTown.type === 'repaire') txt = '';
     else if (state.currentNode) txt = `E : ${RESOURCES[state.currentNode.type].name}`;
   }
   pr.textContent = txt;
   pr.classList.toggle('hidden', !txt);
 }
+
+$('squadList').addEventListener('click', e => {
+  const m = e.target.closest('[data-ctl]');
+  if (!m) return;
+  const u = squad().find(a => a.id === Number(m.dataset.ctl));
+  if (u && !(u.down > 0)) { takeControl(u); logMsg(`Tu contrôles maintenant ${u.name}.`); renderHud(); }
+});
 
 function nearCorpse() {
   let best = null, bd = 2.6;
@@ -125,6 +137,7 @@ function nearCorpse() {
 
 function updateIndicators() {
   const ind = $('dirInd');
+  ind.style.display = isRTS() ? 'none' : '';
   ind.dataset.dir = settings.directional && player.mode !== 'bow' ? mouseDir : '';
   ind.classList.toggle('simple', !settings.directional);
   let threat = null;
@@ -173,7 +186,7 @@ function drawMinimap() {
   for (const u of units) {
     if (u.dead || u.isPlayer || u.civil) continue;
     const [x, y] = toM(u.pos.x, u.pos.z);
-    g.fillStyle = isPlayerSide(u) ? '#4fc3f7' : hostile(player, u) ? '#e53935' : F(u.faction).map;
+    g.fillStyle = isPlayerSide(u) ? '#4fc3f7' : hostile(player, u) ? '#e53935' : u.animal ? '#e8dcc0' : F(u.faction).map;
     g.fillRect(x - 1.5, y - 1.5, 3, 3);
   }
   g.translate(S / 2, S / 2); g.rotate(-player.yaw);
@@ -186,6 +199,7 @@ function drawMinimap() {
 const PANELS = { town: 'town', inv: 'inventory', loot: 'loot', map: 'worldmap', node: 'nodepanel', settings: 'settings' };
 function openPanel(name) {
   state.panel = name;
+  state.craftStation = null;
   if (document.pointerLockElement) document.exitPointerLock();
   for (const id of Object.values(PANELS)) $(id).classList.add('hidden');
   $(PANELS[name]).classList.remove('hidden');
@@ -201,18 +215,41 @@ function renderPanel() {
   if (r) r();
 }
 
-// ---------- Ville ----------
+// ---------- Bâtiments des villes ----------
+const SERVICE_TABS = {
+  marche: [['marche', 'Marché']],
+  auberge: [['taverne', 'Taverne']],
+  forge: [['armurier', 'Boutique'], ['artisanat', 'Forger']],
+  tailleur: [['armurier', 'Boutique'], ['artisanat', 'Coudre']],
+  atelier: [['armurier', 'Boutique'], ['artisanat', 'Fabriquer']],
+  palais: [['faction', 'Faction'], ['caserne', 'Recrutement']],
+  caserne: [['faction', 'Faction'], ['caserne', 'Recrutement']],
+};
+const SERVICE_STATION = { forge: 'forge', tailleur: 'tailleur', atelier: 'atelier' };
 state.townTab = 'marche';
+function openBuilding(s, v) {
+  state.currentTown = s;
+  state.building = v;
+  state.townTab = SERVICE_TABS[v.type][0][0];
+  openPanel('town');
+}
+function shopFor(f, type) {
+  const st = STATIONS[SERVICE_STATION[type]];
+  if (!st) return [];
+  const own = f.shop.filter(id => st.mats.includes(ITEMS[id].mat));
+  const basic = Object.keys(ITEMS).filter(id => st.mats.includes(ITEMS[id].mat) && ITEMS[id].price <= 120);
+  return [...new Set([...own, ...basic])];
+}
 function renderTown() {
-  const s = state.currentTown;
+  const s = state.currentTown, v = state.building;
   const el = $('town');
-  if (!s) { closePanel(); return; }
+  if (!s || !v) { closePanel(); return; }
   const f = F(s.faction);
-  const tabs = [['marche', 'Marché'], ['armurier', 'Armurier'], ['taverne', 'Taverne'], ['faction', 'Faction']];
+  const tabs = SERVICE_TABS[v.type];
   let body = '';
   if (playerHostileTo(s.faction) && state.townTab !== 'faction') {
-    body = `<p class="bad">Les marchands ${esc(f.of)} refusent de traiter avec un ennemi. Les gardes vont t'attaquer.</p>
-      <p class="note">Va voir l'onglet Faction pour payer une amende.</p>`;
+    body = `<p class="bad">${esc(v.keeper)} refuse de traiter avec un ennemi ${esc(f.of)}. Les gardes vont t'attaquer.</p>
+      <p class="note">Va au palais ou à la caserne pour payer une amende.</p>`;
   } else if (state.townTab === 'marche') {
     let rows = '';
     for (const g of [...TRADE_GOODS, 'arrows']) {
@@ -228,30 +265,102 @@ function renderTown() {
     body = `<table><tr><th>Marchandise</th><th>Stock</th><th>Prix (récent)</th><th>Sac</th><th></th><th></th></tr>${rows}</table>
       <div class="note">${s.pop | 0} habitants. Le prix monte quand le stock baisse et chute quand on en apporte beaucoup. Maj + clic = ×5.</div>`;
   } else if (state.townTab === 'armurier') {
-    const shop = f.shop.length ? f.shop : ['dague', 'machette', 'tunique', 'bandana'];
-    body = `<div class="note">Les prix suivent ceux du fer, du bois et du coton de la ville.</div>
+    const shop = shopFor(f, v.type);
+    body = `<div class="note">Les prix suivent ceux du ${STATIONS[SERVICE_STATION[v.type]].mats.map(m => GOODS[m].name.toLowerCase()).join(' et du ')} en ville.</div>
       <h4>À vendre</h4><div class="items">${shop.map(id => `
-      <div class="item"><span><b>${ITEMS[id].name}</b><small>${SLOT_NAMES[ITEMS[id].slot]} · ${itemStats(id)}</small></span>
+      <div class="item"><span><b>${IT(id).name}</b><small>${SLOT_NAMES[ITEMS[id].slot]} · ${itemStats(id)}</small></span>
         <button data-buyitem="${id}" ${state.money < itemBuyPrice(s, id) ? 'disabled' : ''}>${itemBuyPrice(s, id)} 💰</button></div>`).join('')}</div>
       <h4>Ton sac</h4><div class="items">${player.inv.length ? player.inv.map((id, i) => `
-      <div class="item"><span><b>${ITEMS[id].name}</b><small>${itemStats(id)}</small></span>
+      <div class="item"><span><b>${IT(id).name}</b><small>${itemStats(id)}</small></span>
         <button data-sellitem="${i}">Vendre ${itemSellPrice(id)} 💰</button></div>`).join('') : '<small>Rien à vendre.</small>'}</div>`;
+  } else if (state.townTab === 'artisanat') {
+    body = craftHTML(SERVICE_STATION[v.type], 5);
   } else if (state.townTab === 'taverne') {
     const cost = recruitCost();
     const full = squad().length + 1 >= MAX_SQUAD;
-    const sworn = state.allegiance === s.faction;
     const rumors = state.chronicle.slice(-3).reverse().map(c => `<li>« ${esc(c.text)} »</li>`).join('');
-    body = `<div class="note">Un mercenaire te suit, se bat pour toi, ou travaille dans tes exploitations. Escouade : ${squad().length + 1}/${MAX_SQUAD}</div>
-      <button data-recruit ${state.money < cost || full ? 'disabled' : ''}>Recruter un mercenaire (${cost} 💰)</button>
-      ${sworn ? `<button data-recruitvet ${state.money < 250 || full ? 'disabled' : ''}>Recruter un vétéran ${esc(f.of)} (250 💰)</button>` : ''}
-      <button data-rest ${state.money < 10 ? 'disabled' : ''}>Dormir à l'auberge, tout le monde soigné (10 💰)</button>
-      <h4>Nouvelles</h4><ul class="rumors">${rumors || '<li>Rien de neuf.</li>'}</ul>`;
+    body = `<div class="note">Les mercenaires te suivent, se battent, travaillent dans tes exploitations, et tu peux prendre leur contrôle (C).</div>
+      ${state.recruits && state.recruits.town === s.name ? '' : rollRecruits(s)}
+      <div class="items">${state.recruits.list.map((r, i) => `<div class="item"><span><b>${esc(r.name)}</b>
+        <small>❤ ${r.maxHp} · force ${r.str}${Object.entries(r.skills).filter(([, v]) => v >= 10).map(([k, v]) => ` · ${SKILLS[k]} ${v}`).join('')}</small></span>
+        <button data-recruit="${i}" ${state.money < cost || full ? 'disabled' : ''}>Engager (${cost} 💰)</button></div>`).join('') || '<small>Plus personne à engager aujourd\'hui.</small>'}</div>
+      <button data-rest ${state.money < 10 ? 'disabled' : ''}>Louer des chambres, tout le monde soigné (10 💰)</button>
+      <h4>On raconte que…</h4><ul class="rumors">${rumors || '<li>Rien de neuf.</li>'}</ul>`;
+  } else if (state.townTab === 'caserne') {
+    const sworn = state.allegiance === s.faction;
+    const full = squad().length + 1 >= MAX_SQUAD;
+    body = sworn ? `<p>Les vétérans ${esc(f.of)} se battent sous tes ordres.</p>
+      <button data-recruitvet ${state.money < 250 || full ? 'disabled' : ''}>Recruter un vétéran (250 💰)</button>`
+      : `<p class="note">Seuls ceux qui ont prêté serment ${f.art === 'les' ? 'aux' : f.art === 'le' ? 'au' : 'à la'} ${esc(f.name)} peuvent recruter ici.</p>`;
   } else body = factionDetail(f, true);
+  const keeperTitle = SERVICE_KEEPER[v.type] ? `${esc(v.keeper)}, ${SERVICE_KEEPER[v.type].toLowerCase()}` : '';
   el.innerHTML = `
-    <div class="phead">${flagImg(f, 26)}<div><h3>${esc(s.name)}</h3><small>${s.type === 'camp' ? 'Camp' : 'Ville'} ${esc(f.of)} · ${BIOMES[s.biome].name} · garnison ${s.garrison} · 💰 ${state.money}</small></div>
+    <div class="phead">${flagImg(f, 26)}<div><h3>${esc(v.name)}</h3><small>${esc(s.name)} · ${esc(f.name)} · ${keeperTitle} · 💰 ${state.money}</small></div>
       <button class="x" data-close>✕</button></div>
-    <div class="tabs">${tabs.map(([k, n]) => `<button class="${state.townTab === k ? 'on' : ''}" data-tab="${k}">${n}</button>`).join('')}</div>
+    ${tabs.length > 1 ? `<div class="tabs">${tabs.map(([k, n]) => `<button class="${state.townTab === k ? 'on' : ''}" data-tab="${k}">${n}</button>`).join('')}</div>` : ''}
     <div class="pbody">${body}</div>`;
+}
+
+// candidats à la taverne (renouvelés à chaque visite d'une nouvelle ville)
+function rollRecruits(s) {
+  const list = [];
+  for (let i = 0; i < randInt(2, 4); i++) {
+    const skills = { forge: 0, couture: 0, bois: 0, recolte: 0 };
+    const k = pick(Object.keys(SKILLS));
+    skills[k] = randInt(10, 40);
+    if (Math.random() < 0.4) skills[pick(Object.keys(SKILLS))] += randInt(5, 20);
+    const tier = Math.random();
+    list.push({ name: genPerson(), maxHp: randInt(70, 105), str: randInt(2, 5), skills,
+      equip: tier < 0.5 ? { weapon: 'machette', armor: 'tunique', helmet: 'capuche' }
+        : tier < 0.85 ? { weapon: 'sabre', armor: 'cuir', helmet: 'casque_cuir' }
+        : { weapon: 'dague', bow: 'arc_court', armor: 'tunique', helmet: 'capuche' } });
+  }
+  state.recruits = { town: s.name, list };
+  return '';
+}
+
+// ---------- Artisanat ----------
+state.craftWho = null;
+function crafter() { return state.craftWho && team().includes(state.craftWho) ? state.craftWho : player; }
+function craftHTML(station, fee) {
+  const st = STATIONS[station];
+  const u = crafter();
+  const sk = u.skills[st.skill] || 0;
+  const q = ['grossier', 'correct', 'bon', 'excellent'];
+  const chances = [0, 0, 0, 0];
+  for (let i = 0; i < 400; i++) { const s2 = sk + (i / 400 - 0.5) * 50; chances[s2 < 10 ? 0 : s2 < 45 ? 1 : s2 < 78 ? 2 : 3]++; }
+  const rows = RECIPES.filter(r => r.station === station).map(r => {
+    const name = r.name || ITEMS[r.id].name;
+    const enough = Object.entries(r.need).every(([g, n]) => state.goods[g] >= n);
+    const lvl = sk >= (r.min || 0);
+    const need = Object.entries(r.need).map(([g, n]) => `<span class="${state.goods[g] >= n ? 'good' : 'bad'}">${GOODS[g].icon}${n}</span>`).join(' ');
+    return `<div class="item"><span><b>${name}</b><small>${r.out ? '' : itemStats(r.id) + ' · '}${need}${r.min ? ` · niveau ${r.min} requis` : ''}</small></span>
+      <button data-craft="${r.id}" ${enough && lvl && state.money >= fee ? '' : 'disabled'}>Fabriquer${fee ? ` (${fee} 💰)` : ''}</button></div>`;
+  }).join('');
+  return `<div class="row">Artisan : ${team().map(m => `<button class="${m === u ? 'on' : ''}" data-crafter="${m.id}">${esc(m.name)} (${SKILLS[st.skill]} ${m.skills[st.skill] | 0})</button>`).join(' ')}</div>
+    <div class="note">Qualité probable : ${chances.map((c, i) => c ? `${q[i]} ${Math.round(c / 4)} %` : '').filter(Boolean).join(' · ')}. Chaque fabrication améliore la compétence.</div>
+    <div class="items">${rows}</div>`;
+}
+function doCraft(rid, fee) {
+  const r = RECIPES.find(x => x.id === rid);
+  const u = crafter();
+  const st = STATIONS[r.station];
+  const sk = u.skills[st.skill] || 0;
+  if (state.money < fee || sk < (r.min || 0) || !Object.entries(r.need).every(([g, n]) => state.goods[g] >= n)) return;
+  for (const [g, n] of Object.entries(r.need)) state.goods[g] -= n;
+  state.money -= fee;
+  let label;
+  if (r.out) { for (const [g, n] of Object.entries(r.out)) state.goods[g] += n; label = r.name; }
+  else {
+    const q = rollQuality(sk);
+    const id = q === 1 ? r.id : `${r.id}#${q}`;
+    player.inv.push(id);
+    label = IT(id).name;
+  }
+  const gain = Math.max(0.6, 4 * (1 - sk / 110)) * (1 + (r.min || 0) / 50);
+  u.skills[st.skill] = Math.min(100, sk + gain);
+  floatText(u.pos, `${label} !`, '#ffe9a8');
+  logMsg(`${u.name} fabrique : ${label}. ${SKILLS[st.skill]} ${Math.floor(u.skills[st.skill])}.`);
 }
 
 function factionDetail(f, inTown) {
@@ -275,6 +384,8 @@ function factionDetail(f, inTown) {
     <p class="note">${towns.length ? `${towns.length} ${towns.length > 1 ? 'places' : 'place'} : ${esc(towns.map(s => s.name).join(', '))} · ${towns.reduce((a, s) => a + s.pop, 0) | 0} habitants` : 'Aucune ville'}
       ${nodes.length ? `<br>Exploitations : ${Object.entries(prod).map(([g, n]) => `${GOODS[g].icon}×${n}`).join(' ')}` : ''}
       ${f.founded ? `<br>Fondée au jour ${f.founded}` : ''}</p>
+    ${f.bandit ? '' : `<h4>Hiérarchie</h4><ul class="rels"><li>👑 ${esc(f.leader)}, souverain</li>${(f.generals || []).map(g => `<li>🎖 Général ${esc(g.name)} : ${g.status === 'mort' ? '<span class="bad">mort</span>' : g.status === 'armée' ? '<span class="warn">en campagne</span>' : 'au repos'}</li>`).join('')}
+      <li>🛡 ${partiesOf(f.id).filter(p => p.kind === 'patrol').length} capitaines de patrouille</li></ul>`}
     <p>Ta réputation : ${relBadge(f.id)}</p>
     <h4>Relations</h4><ul class="rels">${rels || '<li>Aucune.</li>'}</ul>
     ${actions}</div>`;
@@ -288,6 +399,8 @@ $('town').addEventListener('click', e => {
   const times = e.shiftKey ? 5 : 1;
   if ('close' in d) { closePanel(); return; }
   if (d.tab) state.townTab = d.tab;
+  else if (d.craft) doCraft(d.craft, 5);
+  else if (d.crafter) state.craftWho = team().find(m => m.id === Number(d.crafter)) || null;
   else if (d.buy) {
     const g = d.buy, n = g === 'arrows' ? 10 : 1;
     for (let i = 0; i < times; i++) {
@@ -307,11 +420,11 @@ $('town').addEventListener('click', e => {
     }
   } else if (d.buyitem) {
     const p = itemBuyPrice(s, d.buyitem);
-    if (state.money >= p) { state.money -= p; player.inv.push(d.buyitem); trade(s); logMsg(`Acheté : ${ITEMS[d.buyitem].name}. Ouvre l'inventaire (I) pour l'équiper.`); }
+    if (state.money >= p) { state.money -= p; player.inv.push(d.buyitem); trade(s); logMsg(`Acheté : ${IT(d.buyitem).name}. Ouvre l'inventaire (I) pour l'équiper.`); }
   } else if (d.sellitem) {
     const id = player.inv[Number(d.sellitem)];
     if (id) { player.inv.splice(Number(d.sellitem), 1); state.money += itemSellPrice(id); trade(s); }
-  } else if ('recruit' in d) recruit(s, false);
+  } else if (d.recruit != null && 'recruit' in d) recruit(s, false, Number(d.recruit));
   else if ('recruitvet' in d) recruit(s, true);
   else if ('rest' in d) {
     state.money -= 10;
@@ -332,25 +445,23 @@ function trade(s) {
   if (!F(s.faction).bandit) state.rep[s.faction] = Math.min(25, (state.rep[s.faction] || 0) + 0.3);
 }
 
-function recruit(s, veteran) {
+function recruit(s, veteran, idx) {
   const cost = veteran ? 250 : recruitCost();
   if (state.money < cost || squad().length + 1 >= MAX_SQUAD) return;
   state.money -= cost;
   let u;
   if (veteran) {
-    u = makeTroop(s.faction, 'veteran', player.pos.x + rand(-2, 2), player.pos.z + rand(-2, 2), { name: pick(NAMES) });
+    u = makeTroop(s.faction, 'veteran', player.pos.x + rand(-2, 2), player.pos.z + rand(-2, 2), { title: '' });
     u.faction = 'player';
     u.sworn = true;
   } else {
-    const tier = Math.random();
+    const r = state.recruits && state.recruits.list[idx];
+    if (!r) { state.money += cost; return; }
+    state.recruits.list.splice(idx, 1);
     u = makeUnit({
-      faction: 'player', x: player.pos.x + rand(-2, 2), z: player.pos.z + rand(-2, 2),
-      maxHp: randInt(70, 100), str: randInt(2, 4), speed: 4.7, blockChance: 0.3, blockSkill: 0.5,
-      equip: tier < 0.5 ? { weapon: 'machette', armor: 'tunique', helmet: 'capuche' }
-        : tier < 0.85 ? { weapon: 'sabre', armor: 'cuir', helmet: 'casque_cuir' }
-        : { weapon: 'dague', bow: 'arc_court', armor: 'tunique', helmet: 'capuche' },
-      arrows: 20,
-      look: { body: player.look.body, skin: pick(SKIN_COLORS), pants: '#3b2f22', height: rand(0.93, 1.08) },
+      faction: 'player', x: player.pos.x + rand(-2, 2), z: player.pos.z + rand(-2, 2), name: r.name,
+      maxHp: r.maxHp, str: r.str, speed: 4.7, blockChance: 0.3, blockSkill: 0.5, skills: r.skills, equip: { ...r.equip },
+      arrows: 20, look: { body: player.look.body, skin: pick(SKIN_COLORS), pants: '#3b2f22', height: rand(0.93, 1.08) },
     });
     if (u.equip.bow) u.archer = true;
   }
@@ -394,23 +505,28 @@ function renderNode() {
   if (n.owner === 'player') {
     actions = `<p>Stock : <b>${Math.floor(n.stock)} ${G.icon} ${G.name}</b> · production ${nodeRate(n).toFixed(1)} / jour</p>
       <button data-collect ${n.stock < 1 ? 'disabled' : ''}>Ramasser le stock</button>
-      <button data-harvest>Récolter à la main (+2, 3 s)</button>
+      <button data-harvest>Récolter à la main (3 s, selon ta compétence de récolte)</button>
       <h4>Ouvriers (${workers.length})</h4>
       <div class="note">Chaque compagnon posté ici produit ${(R.rate * 0.5).toFixed(1)} ${G.name.toLowerCase()} par jour et défend l'exploitation contre les pillards.</div>
       <div class="items">${workers.map(a => `<div class="item"><span><b>${esc(a.name)}</b></span><button data-recall="${a.id}">Rappeler</button></div>`).join('')}
       ${idle.map(a => `<div class="item"><span><b>${esc(a.name)}</b><small>dans ton escouade</small></span><button data-assign="${a.id}">Mettre au travail</button></div>`).join('')}
       ${!workers.length && !idle.length ? '<small>Recrute des mercenaires à la taverne pour les mettre au travail.</small>' : ''}</div>
+      <h4>Atelier</h4>
+      ${n.workshop ? `<div class="note">Ton atelier permet de forger, coudre et fabriquer gratuitement.</div>
+        <button data-station="forge">Forger</button> <button data-station="tailleur">Coudre</button> <button data-station="atelier">Fabriquer</button>`
+        : `<button data-build ${state.money < 150 || state.goods.wood < 8 ? 'disabled' : ''}>Construire un atelier (150 💰, 8 🪵 bois)</button>`}
+      ${state.craftStation ? craftHTML(state.craftStation, 0) : ''}
       <button data-abandon>Abandonner l'exploitation</button>`;
   } else if (fid) {
     const hostileOwner = playerHostileTo(fid);
     actions = `<p>Production ${R.rate} ${G.name.toLowerCase()} / jour, livrée à ${esc(n.owner)}.</p>
-      <button data-harvest>Récolter à la main (+2, réputation -4)</button>
+      <button data-harvest>Récolter à la main (réputation -4)</button>
       ${hostileOwner ? '<p class="bad">Cette faction est ton ennemie : impossible de lui acheter.</p>'
         : `<button data-buynode ${state.money < nodePrice(n) ? 'disabled' : ''}>Racheter l'exploitation (${nodePrice(n)} 💰)</button>
            <div class="note">${esc(n.owner)} perdra cette production : ses prix vont monter.</div>`}`;
   } else {
     actions = `<p>Personne n'exploite ce lieu.</p>
-      <button data-harvest>Récolter à la main (+2, 3 s)</button>
+      <button data-harvest>Récolter à la main (3 s, selon ta compétence de récolte)</button>
       <button data-claim ${state.money < 100 ? 'disabled' : ''}>Revendiquer et installer un camp (100 💰)</button>`;
   }
   $('nodepanel').innerHTML = `
@@ -425,7 +541,14 @@ $('nodepanel').addEventListener('click', e => {
   const d = b.dataset;
   if ('close' in d) { closePanel(); return; }
   const G = RESOURCES[n.type].good;
-  if ('collect' in d) { const q = Math.floor(n.stock); state.goods[G] += q; n.stock -= q; logMsg(`Tu ramasses ${q} ${GOODS[G].name.toLowerCase()}.`); }
+  if (d.station) state.craftStation = d.station;
+  else if (d.craft) doCraft(d.craft, 0);
+  else if (d.crafter) state.craftWho = team().find(m => m.id === Number(d.crafter)) || null;
+  else if ('build' in d) {
+    state.money -= 150; state.goods.wood -= 8; n.workshop = true;
+    buildWorkshop(n, n.root, (lx, lz) => heightAt(n.x + lx, n.z + lz) - n.root.position.y);
+    logMsg('Atelier construit.');
+  } else if ('collect' in d) { const q = Math.floor(n.stock); state.goods[G] += q; n.stock -= q; logMsg(`Tu ramasses ${q} ${GOODS[G].name.toLowerCase()}.`); }
   else if ('harvest' in d) { state.harvest = { node: n, t: 3 }; closePanel(); return; }
   else if ('buynode' in d) { state.money -= nodePrice(n); const fid = nodeFaction(n); if (fid) state.rep[fid] = (state.rep[fid] || 0) + 3; claimNode(n, true); }
   else if ('claim' in d) { state.money -= 100; claimNode(n, false); }
@@ -444,8 +567,11 @@ $('nodepanel').addEventListener('click', e => {
 function finishHarvest() {
   const n = state.harvest.node;
   const g = RESOURCES[n.type].good;
-  state.goods[g] += 2;
-  floatText(player.pos, `+2 ${GOODS[g].icon} ${GOODS[g].name}`, '#ffe9a8');
+  const sk = player.skills.recolte || 0;
+  const q = 2 + Math.floor(sk / 30);
+  state.goods[g] += q;
+  player.skills.recolte = Math.min(100, sk + Math.max(0.5, 3 * (1 - sk / 110)));
+  floatText(player.pos, `+${q} ${GOODS[g].icon} ${GOODS[g].name}`, '#ffe9a8');
   const fid = nodeFaction(n);
   if (fid && fid !== 'player') {
     state.rep[fid] = (state.rep[fid] || 0) - 4;
@@ -463,11 +589,11 @@ function renderInventory() {
   const u = members[state.invSel];
   const slots = ['weapon', 'bow', 'armor', 'helmet'].map(slot => {
     const id = u.equip[slot];
-    return `<div class="item"><span><small>${SLOT_NAMES[slot]}</small><b>${id ? ITEMS[id].name : '—'}</b><small>${id ? itemStats(id) : ''}</small></span>
+    return `<div class="item"><span><small>${SLOT_NAMES[slot]}</small><b>${id ? IT(id).name : '—'}</b><small>${id ? itemStats(id) : ''}</small></span>
       ${id ? `<button data-unequip="${slot}">Retirer</button>` : ''}</div>`;
   }).join('');
   const bag = player.inv.map((id, i) => `
-    <div class="item"><span><b>${ITEMS[id].name}</b><small>${SLOT_NAMES[ITEMS[id].slot]} · ${itemStats(id)} · ${ITEMS[id].w} kg</small></span>
+    <div class="item"><span><b>${IT(id).name}</b><small>${SLOT_NAMES[IT(id).slot]} · ${itemStats(id)} · ${IT(id).w} kg</small></span>
       <span><button data-equip="${i}">Équiper</button> <button data-drop="${i}">Jeter</button></span></div>`).join('');
   const goods = Object.entries(state.goods).filter(([, n]) => n >= 1).map(([g, n]) => `${GOODS[g].icon} ${GOODS[g].name} : ${Math.floor(n)}`).join(' · ');
   $('inventory').innerHTML = `
@@ -475,7 +601,9 @@ function renderInventory() {
     <div class="tabs">${members.map((m, i) => `<button class="${i === state.invSel ? 'on' : ''}" data-sel="${i}">${esc(m.name)}</button>`).join('')}</div>
     <div class="pbody two">
       <div><h4>${esc(u.name)}</h4>
-        <div class="statline">❤ ${Math.ceil(u.hp)}/${u.maxHp} · ⚔ ${damageOf(u)} · 🛡 ${armorOf(u)} · 🏃 ${speedOf(u).toFixed(1)}${u.isPlayer ? ` · niv ${u.level}` : ''}</div>
+        <div class="statline">❤ ${Math.ceil(u.hp)}/${u.maxHp} · ⚔ ${damageOf(u)} · 🛡 ${armorOf(u)} · 🏃 ${speedOf(u).toFixed(1)} · niv ${u.level}</div>
+        <div class="statline">${Object.entries(SKILLS).map(([k, n]) => `${n} <b>${Math.floor(u.skills[k] || 0)}</b>`).join(' · ')}${metier(u) ? ` · Métier : <b>${metier(u)}</b>` : ''}</div>
+        ${u.isPlayer ? '<small class="note">Personnage contrôlé</small>' : `<button data-control="${u.id}">Prendre le contrôle</button>`}
         <div class="items">${slots}</div></div>
       <div><h4>Sac commun <small>${Math.round(weightUsed())}/${weightMax()} kg${overloaded() ? ' — surchargé, vous ralentissez !' : ''}</small></h4>
         <div class="items">${bag || '<small>Aucun équipement en réserve.</small>'}</div>
@@ -489,8 +617,9 @@ $('inventory').addEventListener('click', e => {
   const u = [player, ...squad()][state.invSel] || player;
   if ('close' in d) { closePanel(); return; }
   if (d.sel) state.invSel = Number(d.sel);
+  else if (d.control) { takeControl(u); state.invSel = 0; }
   else if (d.equip) {
-    const i = Number(d.equip), id = player.inv[i], slot = ITEMS[id].slot;
+    const i = Number(d.equip), id = player.inv[i], slot = IT(id).slot;
     player.inv.splice(i, 1);
     if (u.equip[slot]) player.inv.push(u.equip[slot]);
     u.equip[slot] = id;
@@ -517,7 +646,7 @@ function renderLoot() {
     <div class="pbody"><div class="items">
         ${l.coins ? `<div class="item"><span><b>💰 ${l.coins} pièces</b></span><button data-coins>Prendre</button></div>` : ''}
         ${goods.map(([g, n]) => `<div class="item"><span><b>${GOODS[g].icon} ${GOODS[g].name} ×${n}</b></span><button data-good="${g}">Prendre</button></div>`).join('')}
-        ${l.items.map((id, i) => `<div class="item"><span><b>${ITEMS[id].name}</b><small>${SLOT_NAMES[ITEMS[id].slot]} · ${itemStats(id)}</small></span><button data-item="${i}">Prendre</button></div>`).join('')}
+        ${l.items.map((id, i) => `<div class="item"><span><b>${IT(id).name}</b><small>${SLOT_NAMES[IT(id).slot]} · ${itemStats(id)}</small></span><button data-item="${i}">Prendre</button></div>`).join('')}
         ${lootEmpty(l) ? '<small>Il ne reste rien.</small>' : ''}
       </div>
       <button data-all ${lootEmpty(l) ? 'disabled' : ''}>Tout prendre</button></div>`;
@@ -724,6 +853,7 @@ function renderSettings() {
       <label class="row">Sensibilité de la souris <input id="sSens" type="range" min="0.2" max="2.5" step="0.05" value="${settings.sens}"> <b id="sSensV">${settings.sens.toFixed(2)}</b></label>
       <label class="row"><input id="sInv" type="checkbox" ${settings.invertY ? 'checked' : ''}> Inverser l'axe vertical</label>
       <label class="row"><input id="sSmooth" type="checkbox" ${settings.smooth ? 'checked' : ''}> Caméra lissée</label>
+      <label class="row"><input id="sRts" type="checkbox" ${settings.camMode === 'rts' ? 'checked' : ''}> Vue tactique façon Kenshi (touche V) : caméra libre, clic gauche pour sélectionner, clic droit pour donner un ordre</label>
       <label class="row"><input id="sDir" type="checkbox" ${settings.directional ? 'checked' : ''}> Combat directionnel (la souris choisit la direction des coups et des parades, comme Mount & Blade)</label>
       <p class="note">Sans combat directionnel : clic gauche pour enchaîner les coups, clic droit maintenu pour parer dans toutes les directions.</p>
     </div>`;
@@ -733,6 +863,7 @@ $('settings').addEventListener('input', e => {
   if (e.target.id === 'sInv') settings.invertY = e.target.checked;
   if (e.target.id === 'sDir') settings.directional = e.target.checked;
   if (e.target.id === 'sSmooth') settings.smooth = e.target.checked;
+  if (e.target.id === 'sRts') setCamMode(e.target.checked ? 'rts' : 'tps');
   saveSettings();
 });
 $('settings').addEventListener('click', e => { if (e.target.closest('[data-close]')) closePanel(); });
@@ -741,7 +872,7 @@ $('settings').addEventListener('click', e => { if (e.target.closest('[data-close
 function unitSave(u) {
   return { name: u.name, look: u.look, equip: u.equip, inv: u.inv || [], hp: Math.max(1, Math.round(u.hp)), maxHp: u.maxHp,
     str: u.str, agi: u.agi, speed: u.speedBase, level: u.level, xp: u.xp, x: u.pos.x, z: u.pos.z, arrows: u.arrows,
-    archer: !!u.archer, sworn: !!u.sworn, stats: u.stats, node: u.assignedNode };
+    archer: !!u.archer, sworn: !!u.sworn, stats: u.stats, node: u.assignedNode, skills: u.skills };
 }
 function saveGame(silent) {
   if (state.mode !== 'play' || state.ko > 0) return false;
@@ -753,7 +884,7 @@ function saveGame(silent) {
     factions: Object.values(state.factions).map(strip),
     settlements: state.settlements.map(s => ({ name: s.name, x: s.x, z: s.z, faction: s.faction, type: s.type, capital: s.capital,
       garrison: s.garrison, pop: s.pop, stock: s.stock, hist: s.hist })),
-    nodes: state.nodes.map(n => ({ owner: n.owner, stock: n.stock, disabled: n.disabled })),
+    nodes: state.nodes.map(n => ({ owner: n.owner, stock: n.stock, disabled: n.disabled, workshop: !!n.workshop })),
     parties: state.parties.map(p => ({ faction: p.faction, kind: p.kind, x: p.x, z: p.z, troops: partyTroops(p), dest: p.dest,
       home: p.home, target: p.target, cargo: p.cargo || null })),
     chronicle: state.chronicle, trades: state.trades, saved: Date.now(),
@@ -791,6 +922,7 @@ function loadGame(data) {
     if (!n) return;
     Object.assign(n, nd);
     refreshNodeFlag(n);
+    if (n.workshop && !n.workshopMesh) buildWorkshop(n, n.root, (lx, lz) => heightAt(n.x + lx, n.z + lz) - n.root.position.y);
   });
   for (const pd of data.parties) {
     if (!F(pd.faction) || !pd.troops.length) continue;
@@ -802,7 +934,7 @@ function loadGame(data) {
   player.inv = data.player.inv || [];
   for (const m of data.squad) {
     const u = makeUnit({ faction: 'player', x: m.x, z: m.z, name: m.name, look: m.look, equip: m.equip, hp: m.hp, maxHp: m.maxHp,
-      str: m.str, agi: m.agi, speed: m.speed, level: m.level, xp: m.xp, arrows: m.arrows, blockChance: 0.3 });
+      str: m.str, agi: m.agi, speed: m.speed, level: m.level, xp: m.xp, arrows: m.arrows, blockChance: 0.3, skills: m.skills });
     u.archer = m.archer; u.sworn = m.sworn; u.assignedNode = m.node != null ? m.node : null;
     dressUnit(u);
   }
@@ -810,7 +942,7 @@ function loadGame(data) {
 }
 function createPlayer(d) {
   const p = makeUnit({ faction: 'player', isPlayer: true, x: d.x, z: d.z, name: d.name, look: d.look, equip: d.equip,
-    hp: d.hp, maxHp: d.maxHp, str: d.str, agi: d.agi, speed: d.speed, level: d.level, xp: d.xp, stats: d.stats });
+    hp: d.hp, maxHp: d.maxHp, str: d.str, agi: d.agi, speed: d.speed, level: d.level, xp: d.xp, stats: d.stats, skills: d.skills });
   p.inv = [];
   return p;
 }
@@ -879,6 +1011,7 @@ $('cReroll').addEventListener('click', () => {
 
 function enterPlay() {
   state.mode = 'play';
+  setTimeout(() => setCamMode(settings.camMode), 0);
   $('creation').classList.add('hidden');
   $('hud').classList.remove('hidden');
 }
@@ -892,6 +1025,7 @@ function startNewGame() {
     speedBase: 4.4 + s.A * 0.2, maxHp: 50 + s.E * 10,
   });
   player.hp = player.maxHp;
+  Object.assign(player.skills, creation.origin.skills || {});
   player.pos.set(g.x, heightAt(g.x, g.z), g.z);
   state.money = creation.origin.money;
   for (const k in state.goods) state.goods[k] = 0;
@@ -901,7 +1035,7 @@ function startNewGame() {
   player.yaw = cam.yaw;
   enterPlay();
   populateWorld();
-  logMsg(`${player.name} arrive à ${start.name}. M : carte · I : inventaire · E : interagir · O : réglages.`);
+  logMsg(`${player.name} arrive à ${start.name}. M : carte · I : inventaire · E : entrer dans un bâtiment · V : vue tactique · O : réglages.`);
 }
 $('cStart').addEventListener('click', startNewGame);
 $('cContinue').addEventListener('click', () => {

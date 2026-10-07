@@ -67,7 +67,8 @@ function makeNoise(seed) {
 
 // ---------- Marchandises ----------
 const GOODS = {
-  food:   { name: 'Céréales', icon: '🌾', base: 8,  w: 1 },
+  food:   { name: 'Vivres',   icon: '🌾', base: 8,  w: 1 },
+  leather:{ name: 'Cuir',     icon: '🟫', base: 20, w: 1 },
   wood:   { name: 'Bois',     icon: '🪵', base: 7,  w: 2 },
   iron:   { name: 'Fer',      icon: '⛏️', base: 26, w: 2 },
   cloth:  { name: 'Coton',    icon: '🧵', base: 16, w: 1 },
@@ -75,9 +76,9 @@ const GOODS = {
   salt:   { name: 'Sel',      icon: '🧂', base: 14, w: 1 },
   arrows: { name: 'Flèches',  icon: '🏹', base: 1,  w: 0 },
 };
-const TRADE_GOODS = ['food', 'wood', 'iron', 'cloth', 'spices', 'salt'];
+const TRADE_GOODS = ['food', 'wood', 'iron', 'cloth', 'leather', 'spices', 'salt'];
 // consommation par jour pour 100 habitants
-const CONSUMPTION = { food: 10, wood: 4, iron: 1.5, cloth: 3, spices: 1, salt: 2 };
+const CONSUMPTION = { food: 10, wood: 4, iron: 1.5, cloth: 3, leather: 1, spices: 1, salt: 2 };
 
 // ---------- Biomes ----------
 const BIOMES = {
@@ -96,6 +97,7 @@ const RESOURCES = {
   coton:  { name: 'Plantation de coton',  good: 'cloth',  biomes: ['steppe'],          rate: 8,  crop: '#f2efe6' },
   epices: { name: "Plantation d'épices",  good: 'spices', biomes: ['desert'],          rate: 4,  crop: '#b8452e' },
   sel:    { name: 'Salines',              good: 'salt',   biomes: ['sel'],             rate: 9 },
+  elevage:{ name: 'Élevage',              good: 'leather', biomes: ['steppe'],         rate: 6 },
 };
 
 // ---------- Objets ----------
@@ -117,20 +119,39 @@ const ITEMS = {
   haillons: { name: 'Haillons',          slot: 'armor', armor: 0, price: 2,   w: 1,  mat: 'cloth', color: '#8a7a60' },
   tunique:  { name: 'Tunique',           slot: 'armor', armor: 1, price: 20,  w: 1,  mat: 'cloth', color: null },
   robe:     { name: 'Robe épaisse',      slot: 'armor', armor: 2, price: 90,  w: 2,  mat: 'cloth', color: '#efe6d0' },
-  cuir:     { name: 'Armure de cuir',    slot: 'armor', armor: 3, price: 110, w: 4,  mat: 'cloth', color: '#6b4a2b' },
+  cuir:     { name: 'Armure de cuir',    slot: 'armor', armor: 3, price: 110, w: 4,  mat: 'leather', color: '#6b4a2b' },
   mailles:  { name: 'Cotte de mailles',  slot: 'armor', armor: 6, price: 320, w: 8,  mat: 'iron', color: '#8c9196', speed: -0.2 },
   plaques:  { name: 'Armure de plaques', slot: 'armor', armor: 9, price: 650, w: 12, mat: 'iron', color: '#b9bec4', speed: -0.5 },
 
   bandana:     { name: 'Bandana',        slot: 'helmet', armor: 0, price: 5,   w: 0, mat: 'cloth', model: 'band' },
   capuche:     { name: 'Capuche',        slot: 'helmet', armor: 1, price: 15,  w: 0, mat: 'cloth', model: 'hood' },
   turban:      { name: 'Turban',         slot: 'helmet', armor: 1, price: 20,  w: 0, mat: 'cloth', model: 'turban' },
-  casque_cuir: { name: 'Casque de cuir', slot: 'helmet', armor: 2, price: 60,  w: 1, mat: 'cloth', model: 'cap',  color: '#6b4a2b' },
+  casque_cuir: { name: 'Casque de cuir', slot: 'helmet', armor: 2, price: 60,  w: 1, mat: 'leather', model: 'cap',  color: '#6b4a2b' },
   casque_fer:  { name: 'Casque de fer',  slot: 'helmet', armor: 4, price: 180, w: 2, mat: 'iron', model: 'helm', color: '#8c9196' },
   heaume:      { name: 'Heaume',         slot: 'helmet', armor: 5, price: 300, w: 3, mat: 'iron', model: 'greathelm', color: '#b9bec4' },
 };
 const SLOT_NAMES = { weapon: 'Arme', bow: 'Arc', armor: 'Armure', helmet: 'Tête' };
+
+// Qualité des objets fabriqués : « sabre#2 » = sabre de bonne qualité
+const QUALITY = [
+  { n: 'grossier', k: 0.8, p: 0.5 }, { n: '', k: 1, p: 1 }, { n: 'bon', k: 1.15, p: 1.6 }, { n: 'excellent', k: 1.3, p: 2.4 },
+];
+const _itCache = {};
+function IT(id) {
+  if (!id) return null;
+  if (_itCache[id]) return _itCache[id];
+  const [b, q] = String(id).split('#');
+  const base = ITEMS[b];
+  if (!base) return null;
+  const qi = q == null ? 1 : Number(q);
+  const Q = QUALITY[qi] || QUALITY[1];
+  const o = { ...base, base: b, q: qi, name: base.name + (Q.n ? ` (${Q.n})` : ''), price: Math.round(base.price * Q.p) };
+  if (base.dmg) o.dmg = Math.round(base.dmg * Q.k);
+  if (base.armor) o.armor = Math.round(base.armor * Q.k * 10) / 10;
+  return (_itCache[id] = o);
+}
 function itemStats(id) {
-  const it = ITEMS[id];
+  const it = IT(id);
   if (!it) return '';
   if (it.slot === 'weapon') return `⚔ ${it.dmg} · allonge ${it.reach} m`;
   if (it.slot === 'bow') return `🏹 ${it.dmg} · portée ${it.range} m`;
@@ -138,13 +159,14 @@ function itemStats(id) {
 }
 
 // ---------- Troupes ----------
-const TROOP_POWER = { recrue: 1, veteran: 2, archer: 1.2, pillard: 0.7, chef: 1.8 };
+const TROOP_POWER = { recrue: 1, veteran: 2, archer: 1.2, pillard: 0.7, chef: 1.8, general: 4 };
 const TROOP_BASE = {
   recrue:  { hp: 70,  str: 2, label: 'Recrue' },
   veteran: { hp: 110, str: 5, label: 'Vétéran' },
   archer:  { hp: 65,  str: 2, label: 'Archer' },
   pillard: { hp: 55,  str: 1, label: 'Pillard' },
   chef:    { hp: 130, str: 5, label: 'Chef' },
+  general: { hp: 220, str: 8, label: 'Général' },
 };
 
 // Styles militaires : équipement des troupes et ce que vendent les armuriers
@@ -194,6 +216,15 @@ const CULTURES = {
     },
     shop: ['machette', 'sabre', 'epee', 'lance', 'arc_court', 'tunique', 'cuir', 'mailles', 'capuche', 'casque_cuir', 'casque_fer'],
   },
+  cannibale: {
+    camp: true, tabard: false,
+    troops: {
+      pillard: { weapon: ['baton', 'hache', 'machette'], armor: 'haillons', helmet: null },
+      archer:  { weapon: ['dague'], bow: 'arc_court', armor: 'haillons', helmet: null },
+      chef:    { weapon: ['hache', 'masse'], armor: 'cuir', helmet: 'bandana' },
+    },
+    shop: [],
+  },
   brigand: {
     camp: true, tabard: false,
     troops: {
@@ -239,12 +270,14 @@ const FLAG_EMBLEMS = ['coin', 'hammer', 'sun', 'crescent', 'skull', 'star', 'tow
 const ORIGINS = [
   { id: 'vagabond', name: 'Vagabond', desc: '150 💰, une machette, un peu de nourriture.', money: 150,
     goods: { food: 4 }, equip: { weapon: 'machette', armor: 'tunique', helmet: 'capuche' }, bonus: {} },
-  { id: 'marchand', name: 'Marchand', desc: '400 💰 et du coton à revendre, mais -1 Force.', money: 400,
-    goods: { food: 4, cloth: 6 }, equip: { weapon: 'dague', armor: 'tunique', helmet: 'turban' }, bonus: { F: -1 } },
+  { id: 'marchand', name: 'Marchand', desc: '400 💰 et du coton à revendre, couture 15, mais -1 Force.', money: 400,
+    goods: { food: 4, cloth: 6 }, equip: { weapon: 'dague', armor: 'tunique', helmet: 'turban' }, bonus: { F: -1 }, skills: { couture: 15 } },
   { id: 'deserteur', name: 'Déserteur', desc: '+1 Force, +1 Endurance. Sabre et cuir, mais 40 💰.', money: 40,
     goods: { food: 3 }, equip: { weapon: 'sabre', armor: 'cuir', helmet: 'casque_cuir' }, bonus: { F: 1, E: 1 } },
-  { id: 'chasseur', name: 'Chasseur', desc: 'Un arc court et 30 flèches. +1 Agilité. 80 💰.', money: 80,
-    goods: { food: 3, arrows: 30 }, equip: { weapon: 'dague', bow: 'arc_court', armor: 'tunique', helmet: 'capuche' }, bonus: { A: 1 } },
+  { id: 'chasseur', name: 'Chasseur', desc: 'Un arc court, 30 flèches, menuiserie 20. +1 Agilité. 80 💰.', money: 80,
+    goods: { food: 3, arrows: 30 }, equip: { weapon: 'dague', bow: 'arc_court', armor: 'tunique', helmet: 'capuche' }, bonus: { A: 1 }, skills: { bois: 20, recolte: 15 } },
+  { id: 'forgeron', name: 'Apprenti forgeron', desc: '100 💰, 8 fer, compétence de forge 30.', money: 100,
+    goods: { food: 3, iron: 8 }, equip: { weapon: 'machette', armor: 'tunique' }, bonus: {}, skills: { forge: 30 } },
   { id: 'esclave', name: 'Esclave évadé', desc: '+2 Agilité. Des haillons, pas une pièce.', money: 0,
     goods: { food: 1 }, equip: { armor: 'haillons' }, bonus: { A: 2 } },
 ];
@@ -258,3 +291,67 @@ const STATS = [
 const NAMES = ['Kael', 'Mira', 'Ruk', 'Sanna', 'Torv', 'Ylva', 'Bren', 'Oska', 'Hal', 'Zia',
   'Dorn', 'Lisk', 'Vetch', 'Ama', 'Grell', 'Nox', 'Pell', 'Rhea', 'Sorn', 'Tam', 'Idris', 'Kova', 'Safi', 'Jurek'];
 const DIRS = { haut: '↑', gauche: '←', droite: '→', estoc: '↓' };
+
+// ---------- Noms de personnes ----------
+const FIRST_NAMES = ['Kael', 'Mira', 'Ruk', 'Sanna', 'Torv', 'Ylva', 'Bren', 'Oska', 'Hal', 'Zia', 'Dorn', 'Lisk', 'Vetch', 'Ama',
+  'Grell', 'Nox', 'Pell', 'Rhea', 'Sorn', 'Tam', 'Idris', 'Kova', 'Safi', 'Jurek', 'Asha', 'Bako', 'Cyra', 'Dahl', 'Esko', 'Fara',
+  'Gideon', 'Hesse', 'Ines', 'Joss', 'Kira', 'Lumo', 'Maro', 'Nadia', 'Orin', 'Pia', 'Quell', 'Rasha', 'Silas', 'Tova', 'Ulric',
+  'Vida', 'Wren', 'Yorr', 'Zeno', 'Arn', 'Bria', 'Cato', 'Dunya', 'Edda', 'Fenn', 'Gala', 'Hakon', 'Isra', 'Jalo', 'Keto'];
+const genPerson = (rng = Math.random) => `${rpick(rng, FIRST_NAMES)} ${genName(rng)}`;
+const INN_A = ['Chameau', 'Scorpion', 'Puits', 'Vautour', 'Lézard', 'Tonneau', 'Croissant', 'Sabre', 'Corbeau', 'Chacal'];
+const INN_B = ['Borgne', 'Rouge', 'Sec', 'Ivre', 'Doré', 'Fêlé', 'Joyeux', 'Brûlé', 'Perdu', 'Tranquille'];
+
+// ---------- Compétences et artisanat ----------
+const SKILLS = { forge: 'Forge', couture: 'Couture', bois: 'Menuiserie', recolte: 'Récolte' };
+const SKILL_TITLES = { forge: 'Forgeron', couture: 'Tailleur', bois: 'Menuisier', recolte: 'Récolteur' };
+const STATIONS = {
+  forge:    { name: 'Forge',     skill: 'forge',   mats: ['iron'] },
+  tailleur: { name: 'Tailleur',  skill: 'couture', mats: ['cloth', 'leather'] },
+  atelier:  { name: 'Menuisier', skill: 'bois',    mats: ['wood'] },
+};
+const RECIPES = [
+  { id: 'dague',       station: 'forge',    need: { iron: 2 } },
+  { id: 'machette',    station: 'forge',    need: { iron: 3, wood: 1 } },
+  { id: 'sabre',       station: 'forge',    need: { iron: 4, leather: 1 } },
+  { id: 'epee',        station: 'forge',    need: { iron: 6, leather: 1 }, min: 20 },
+  { id: 'masse',       station: 'forge',    need: { iron: 6, wood: 1 }, min: 15 },
+  { id: 'hache',       station: 'forge',    need: { iron: 7, wood: 2 }, min: 25 },
+  { id: 'cimeterre',   station: 'forge',    need: { iron: 8, leather: 1 }, min: 40 },
+  { id: 'casque_fer',  station: 'forge',    need: { iron: 4, leather: 1 }, min: 10 },
+  { id: 'heaume',      station: 'forge',    need: { iron: 7, leather: 1 }, min: 35 },
+  { id: 'mailles',     station: 'forge',    need: { iron: 10, cloth: 2 }, min: 25 },
+  { id: 'plaques',     station: 'forge',    need: { iron: 16, leather: 3 }, min: 50 },
+  { id: 'tunique',     station: 'tailleur', need: { cloth: 3 } },
+  { id: 'capuche',     station: 'tailleur', need: { cloth: 1 } },
+  { id: 'turban',      station: 'tailleur', need: { cloth: 2 } },
+  { id: 'bandana',     station: 'tailleur', need: { cloth: 1 } },
+  { id: 'robe',        station: 'tailleur', need: { cloth: 5 }, min: 10 },
+  { id: 'casque_cuir', station: 'tailleur', need: { leather: 2 } },
+  { id: 'cuir',        station: 'tailleur', need: { leather: 5, cloth: 1 }, min: 10 },
+  { id: 'baton',       station: 'atelier',  need: { wood: 2 } },
+  { id: 'lance',       station: 'atelier',  need: { wood: 3, iron: 2 } },
+  { id: 'arc_court',   station: 'atelier',  need: { wood: 4, cloth: 1 } },
+  { id: 'arc_long',    station: 'atelier',  need: { wood: 6, cloth: 1 }, min: 25 },
+  { id: 'fleches',     station: 'atelier',  need: { wood: 2, iron: 1 }, out: { arrows: 20 }, name: 'Flèches ×20' },
+];
+const skillLevel = v => Math.floor(v || 0);
+function rollQuality(skill) {
+  const score = (skill || 0) + rand(-25, 25);
+  return score < 10 ? 0 : score < 45 ? 1 : score < 78 ? 2 : 3;
+}
+function metier(u) {
+  let best = null;
+  for (const k in SKILLS) if ((u.skills[k] || 0) >= 20 && (!best || u.skills[k] > u.skills[best])) best = k;
+  return best ? SKILL_TITLES[best] : null;
+}
+
+// ---------- Animaux sauvages ----------
+const SPECIES = {
+  hyene:    { name: 'Hyène',          biomes: ['desert', 'steppe'],      hp: 45,  dmg: 7,  cd: 1.0, reach: 1.7, speed: 6,   size: 0.8, color: '#9a7a50', pred: true,  pack: [2, 4], loot: { food: 2, leather: 1 } },
+  loup:     { name: 'Loup',           biomes: ['foret', 'steppe', 'montagne'], hp: 55, dmg: 9, cd: 0.9, reach: 1.7, speed: 6.5, size: 0.85, color: '#6a6a6a', pred: true, pack: [2, 4], loot: { food: 2, leather: 2 } },
+  ours:     { name: 'Ours',           biomes: ['foret', 'montagne'],     hp: 220, dmg: 22, cd: 1.6, reach: 2.3, speed: 5,   size: 1.6, color: '#4a3220', pred: true,  pack: [1, 1], loot: { food: 6, leather: 5 } },
+  scorpion: { name: 'Scorpion géant', biomes: ['desert', 'sel'],         hp: 90,  dmg: 14, cd: 1.2, reach: 2.0, speed: 4,   size: 1.2, color: '#3a2a1a', pred: true,  pack: [1, 2], loot: { food: 1 }, shape: 'scorpion' },
+  sanglier: { name: 'Sanglier',       biomes: ['foret', 'steppe'],       hp: 70,  dmg: 10, cd: 1.2, reach: 1.7, speed: 5.5, size: 0.9, color: '#5a4030', pred: false, fights: true, pack: [1, 3], loot: { food: 4, leather: 2 } },
+  antilope: { name: 'Antilope',       biomes: ['steppe', 'desert'],      hp: 40,  dmg: 0,  cd: 1,   reach: 1,   speed: 8,   size: 0.9, color: '#c9a070', pred: false, pack: [3, 6], loot: { food: 3, leather: 2 } },
+  cerf:     { name: 'Cerf',           biomes: ['foret'],                 hp: 50,  dmg: 0,  cd: 1,   reach: 1,   speed: 7.5, size: 1.1, color: '#8a5a30', pred: false, pack: [2, 4], loot: { food: 4, leather: 2 } },
+};

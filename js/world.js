@@ -228,6 +228,14 @@ function textSprite(text, size = 1, color = '#fff4dc') {
 // ---------- Génération des factions ----------
 function genFaction(rng, opts = {}) {
   const place = opts.place || genName(rng);
+  if (opts.cannibal) {
+    return {
+      id: 'cannibales', name: `Cannibales ${deN(place)}`, art: 'les', of: `des Cannibales ${deN(place)}`, culture: 'cannibale', bandit: true,
+      map: '#5a1010', colors: ['#3a1010', '#d8d0c0', '#8a1a1a'], flag: { pattern: 'border', emblem: 'skull' },
+      leader: `Grand Mangeur ${genName(rng)}`, outfit: { body: '#7a4a3a', pants: '#3a2a1a', tabard: false },
+      troops: JSON.parse(JSON.stringify(CULTURES.cannibale.troops)), shop: [], alive: true, founded: 0,
+    };
+  }
   if (opts.bandit) {
     return {
       id: 'bandits', name: `Brigands ${deN(place)}`, art: 'les', of: `des Brigands ${deN(place)}`, culture: 'brigand', bandit: true,
@@ -254,22 +262,129 @@ function genFaction(rng, opts = {}) {
   };
 }
 
-// ---------- Villes et camps ----------
+// ---------- Villes, camps et repaires ----------
+const SERVICE_NAMES = { auberge: 'Auberge', marche: 'Marché', forge: 'Forge', tailleur: 'Tailleur', atelier: 'Menuisier', palais: 'Palais', caserne: 'Caserne' };
+const SERVICE_KEEPER = { auberge: 'Aubergiste', marche: 'Marchand', forge: 'Forgeron', tailleur: 'Tailleur', atelier: 'Menuisier', palais: 'Intendant', caserne: 'Sergent' };
+
 function buildSettlement(s) {
   const g = new T.Group();
   g.position.set(s.x, s.h, s.z);
   const rng = mulberry32(Math.round(s.x * 13 + s.z * 7));
   const ly = (lx, lz) => heightAt(s.x + lx, s.z + lz) - s.h;
   const fac = F(s.faction);
-  s.flags = [];
-  s.stalls = [];
+  s.flags = []; s.stalls = []; s.services = []; s.blockers = [];
+  const solid = m => { s.blockers.push(m); return m; };
   const addFlag = (lx, lz, height) => {
     const fp = makeFlagPole(fac, height);
     fp.g.position.set(lx, ly(lx, lz), lz);
     g.add(fp.g);
     s.flags.push(fp.cloth);
   };
-  if (s.type === 'ville') {
+  // bâtiment orienté vers le centre, avec une porte et un tenancier
+  const service = (type, a, r, build) => {
+    const lx = Math.cos(a) * r, lz = Math.sin(a) * r;
+    const b = new T.Group();
+    b.position.set(lx, ly(lx, lz), lz);
+    const yaw = Math.atan2(-Math.cos(a), -Math.sin(a));
+    b.rotation.y = yaw;
+    const size = build(b);
+    g.add(b);
+    const reach = size / 2 + 1.4;
+    addObstacle(s.x + lx, s.z + lz, size / 2 + 0.2);
+    const dx = s.x + lx - Math.cos(a) * reach, dz = s.z + lz - Math.sin(a) * reach;
+    const keeper = genPerson(rng);
+    const name = type === 'auberge' ? `Au ${rpick(rng, INN_A)} ${rpick(rng, INN_B)}`
+      : type === 'palais' ? `Palais ${deN(s.name)}` : type === 'marche' ? `Marché ${deN(s.name)}`
+      : `${SERVICE_NAMES[type]} de ${keeper.split(' ')[0]}`;
+    s.services.push({ type, name, keeper, x: dx, z: dz, yaw });
+    const sign = textSprite(name, 0.45, '#ffe9b8');
+    sign.position.set(0, size > 8 ? 9 : 6, 0);
+    b.add(sign);
+  };
+  const box = (w, h, d, color, x = 0, y = 0, z = 0) => { const m = mesh(new T.BoxGeometry(w, h, d), color); m.position.set(x, y, z); return m; };
+  const roof = (w, d, h, color) => {
+    const r = mesh(new T.ConeGeometry(Math.max(w, d) * 0.75, h, 4), color);
+    r.rotation.y = Math.PI / 4; r.scale.set(w / Math.max(w, d), 1, d / Math.max(w, d));
+    return r;
+  };
+  const BUILD = {
+    auberge: b => {
+      b.add(solid(box(8, 3.5, 7, '#a3835a', 0, 1.75, 0)), solid(box(7, 2.6, 6, '#b39468', 0, 4.8, 0)));
+      const r = roof(7.4, 6.4, 2.2, '#7a4a2a'); r.position.y = 7.2; b.add(r);
+      b.add(box(1.4, 2.2, 0.2, '#4a3020', 0, 1.1, 3.55), box(2.2, 0.8, 0.1, '#6e4a2a', 0, 3.2, 3.6));
+      for (const x of [-2.4, 2.4]) b.add(box(1.4, 0.8, 1, '#6e5538', x, 0.4, 4.6));
+      return 8;
+    },
+    forge: b => {
+      for (const [x, z] of [[-2.8, -2.2], [2.8, -2.2], [-2.8, 2.2], [2.8, 2.2]]) b.add(box(0.25, 3.2, 0.25, '#4a3826', x, 1.6, z));
+      b.add(solid(box(6.4, 0.3, 5.2, '#5a4630', 0, 3.3, 0)));
+      b.add(solid(box(2, 1.6, 1.6, '#5f5850', -1.6, 0.8, -1.4)));
+      const coal = new T.Mesh(new T.BoxGeometry(1.2, 0.3, 1), new T.MeshBasicMaterial({ color: '#ff7a2a' }));
+      coal.position.set(-1.6, 1.65, -1.2); b.add(coal);
+      b.add(box(0.8, 4.5, 0.8, '#4a4440', -1.6, 3.8, -1.8));
+      b.add(box(0.9, 0.5, 0.4, '#3a3a3a', 1.2, 0.9, 0.6), box(0.4, 0.6, 0.3, '#5a4630', 1.2, 0.35, 0.6));
+      return 6.4;
+    },
+    tailleur: b => {
+      b.add(solid(box(6, 3.4, 5, '#b8a07a', 0, 1.7, 0)));
+      const r = roof(6.4, 5.4, 1.8, '#6e3a5a'); r.position.y = 4.3; b.add(r);
+      b.add(box(1.2, 2.1, 0.2, '#4a3020', 0, 1.05, 2.55));
+      ['#b8452e', '#2e6db8', '#d1a12c', '#f2efe6'].forEach((c, i) => b.add(box(0.3, 0.3, 1.4, c, -2 + i * 0.5, 0.2, 3.3)));
+      return 6;
+    },
+    atelier: b => {
+      b.add(solid(box(6, 3.2, 5, '#8a6a48', 0, 1.6, 0)));
+      const r = roof(6.4, 5.4, 1.6, '#5a4026'); r.position.y = 4; b.add(r);
+      b.add(box(1.2, 2.1, 0.2, '#3a2818', 0, 1.05, 2.55));
+      for (let i = 0; i < 3; i++) { const l = mesh(new T.CylinderGeometry(0.25, 0.25, 3, 6), '#7a5230'); l.rotation.z = Math.PI / 2; l.position.set(2.2, 0.25 + i * 0.4, 3.2); b.add(l); }
+      return 6;
+    },
+    palais: b => {
+      b.add(solid(box(11, 6, 9, '#c9b48a', 0, 3, 0)), solid(box(8, 3, 7, '#d8c49a', 0, 7.5, 0)));
+      for (const x of [-5.5, 5.5]) { const t = mesh(new T.CylinderGeometry(1.4, 1.6, 11, 8), '#b8a07a'); t.position.set(x, 5.5, -4); b.add(solid(t)); }
+      b.add(box(2.4, 3.2, 0.3, '#4a3020', 0, 1.6, 4.55));
+      return 11;
+    },
+    caserne: b => {
+      b.add(solid(box(9, 4, 7, '#8d7350', 0, 2, 0)));
+      for (let i = 0; i < 5; i++) b.add(box(0.8, 0.8, 7, '#8d7350', -4 + i * 2, 4.4, 0));
+      b.add(box(1.8, 2.4, 0.3, '#3a2818', 0, 1.2, 3.55));
+      for (let i = 0; i < 3; i++) b.add(box(0.12, 1.6, 0.12, '#6e5538', -3 + i * 0.4, 0.8, 4.2));
+      return 9;
+    },
+    tente: (color, size = 7) => b => {
+      const t = mesh(new T.ConeGeometry(size * 0.55, size * 0.6, 6), color); t.position.y = size * 0.3; b.add(solid(t));
+      b.add(box(1.2, 1.8, 0.2, '#3a2818', 0, 0.9, size * 0.42));
+      return size;
+    },
+    enclume: b => {
+      b.add(box(0.9, 0.5, 0.4, '#3a3a3a', 0, 0.9, 0), box(0.4, 0.6, 0.3, '#5a4630', 0, 0.35, 0));
+      const fire = new T.Mesh(new T.ConeGeometry(0.6, 1, 5), new T.MeshBasicMaterial({ color: '#ff8a3c' }));
+      fire.position.set(-1.6, 0.5, 0); b.add(fire);
+      return 3;
+    },
+  };
+
+  if (s.type === 'repaire') {
+    const cann = fac.culture === 'cannibale';
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6 * Math.PI * 2 + rng(), r = 8 + rng() * 6;
+      const hx = Math.cos(a) * r, hz = Math.sin(a) * r;
+      const hut = mesh(new T.ConeGeometry(2.4, 3, 6), cann ? '#4a3a2a' : '#5a4a3a');
+      hut.position.set(hx, ly(hx, hz) + 1.5, hz);
+      g.add(solid(hut));
+      addObstacle(s.x + hx, s.z + hz, 2.2);
+    }
+    for (let i = 0; i < 5; i++) {
+      const a = rng() * Math.PI * 2, r = 4 + rng() * 12, tx = Math.cos(a) * r, tz = Math.sin(a) * r;
+      g.add(box(0.15, 2.6, 0.15, '#4a3826', tx, ly(tx, tz) + 1.3, tz), box(0.3, 0.3, 0.3, '#e8e0d0', tx, ly(tx, tz) + 2.7, tz));
+    }
+    const fire = new T.Mesh(new T.ConeGeometry(0.9, 1.4, 5), new T.MeshBasicMaterial({ color: '#ff7a2a' }));
+    fire.position.set(0, ly(0, 0) + 0.7, 0);
+    g.add(fire);
+    if (cann) for (let i = 0; i < 8; i++) g.add(box(0.5, 0.12, 0.12, '#efe8d8', rand(-2, 2), ly(0, 0) + 0.06, rand(-2, 2)));
+    addFlag(3, 3, 6);
+  } else if (s.type === 'ville') {
     const segs = 40;
     const segLen = 2 * Math.PI * s.r / segs + 0.4;
     for (let i = 0; i < segs; i++) {
@@ -279,35 +394,39 @@ function buildSettlement(s) {
       const w = mesh(new T.BoxGeometry(segLen, 5, 1.2), '#8d7350');
       w.position.set(wx, ly(wx, wz) + 2, wz);
       w.rotation.y = -a - Math.PI / 2;
-      g.add(w);
+      g.add(solid(w));
     }
     for (const side of [-1, 1]) {
       const a = s.gate + side * 0.22;
       const tx = Math.cos(a) * s.r, tz = Math.sin(a) * s.r;
       const tower = mesh(new T.CylinderGeometry(1.8, 2.1, 8, 8), '#7a6243');
       tower.position.set(tx, ly(tx, tz) + 4, tz);
-      g.add(tower);
+      g.add(solid(tower));
       addFlag(tx, tz, 11);
     }
+    const types = ['auberge', 'forge', 'tailleur', 'atelier', s.capital ? 'palais' : 'caserne'];
+    const angles = [];
+    types.forEach((t, i) => { const a = s.gate + Math.PI + (i - 2) * 0.95; angles.push(a); service(t, a, t === 'palais' ? 20 : 17, BUILD[t]); });
+    // maisons sur l'anneau extérieur
     const houses = [];
     let tries = 0;
-    while (houses.length < 10 && tries++ < 250) {
-      const a = rng() * Math.PI * 2, r = 12 + rng() * (s.r - 19);
+    while (houses.length < 9 && tries++ < 300) {
+      const a = rng() * Math.PI * 2, r = 24 + rng() * 5;
+      if (Math.abs(angleDiff(a, s.gate)) < 0.45) continue;
       const hx = Math.cos(a) * r, hz = Math.sin(a) * r;
-      if (Math.abs(angleDiff(a, s.gate)) < 0.5) continue;
-      const w = 5 + rng() * 4, dpt = 5 + rng() * 3, h = 3 + rng() * 2.5;
-      if (houses.some(o => Math.hypot(o.x - hx, o.z - hz) < o.r + Math.max(w, dpt) / 2 + 1.5)) continue;
+      if (angles.some((sa, i) => Math.hypot(Math.cos(sa) * 17 - hx, Math.sin(sa) * 17 - hz) < 9)) continue;
+      const w = 4 + rng() * 3, dpt = 4 + rng() * 2, h = 2.8 + rng() * 2;
+      if (houses.some(o => Math.hypot(o.x - hx, o.z - hz) < o.r + Math.max(w, dpt) / 2 + 1.2)) continue;
       houses.push({ x: hx, z: hz, r: Math.max(w, dpt) / 2 });
-      const house = mesh(new T.BoxGeometry(w, h, dpt), rng() < 0.5 ? '#b39468' : '#a3835a');
-      house.position.set(hx, ly(hx, hz) + h / 2, hz);
-      house.rotation.y = rng() * Math.PI;
-      const roof = mesh(new T.BoxGeometry(w + 0.6, 0.4, dpt + 0.6), '#6e5538');
-      roof.position.y = h / 2 + 0.2;
-      house.add(roof);
+      const house = new T.Group();
+      house.position.set(hx, ly(hx, hz), hz);
+      house.rotation.y = -a;
+      house.add(solid(box(w, h, dpt, rng() < 0.5 ? '#b39468' : '#a3835a', 0, h / 2, 0)));
+      const r2 = roof(w + 0.4, dpt + 0.4, 1.6, rng() < 0.5 ? '#6e5538' : '#7a4a2a'); r2.position.y = h + 0.8; house.add(r2);
       g.add(house);
       addObstacle(s.x + hx, s.z + hz, Math.max(w, dpt) / 2 + 0.3);
     }
-    addFlag(0, 0, 14);
+    addFlag(3, -3, 14);
   } else {
     const n = Math.round(2 * Math.PI * s.r / 1.3);
     for (let i = 0; i < n; i++) {
@@ -317,55 +436,44 @@ function buildSettlement(s) {
       const stake = mesh(new T.CylinderGeometry(0.25, 0.3, 3.2, 5), '#6e5538');
       stake.position.set(px, ly(px, pz) + 1.6, pz);
       stake.rotation.z = (rng() - 0.5) * 0.15;
-      g.add(stake);
+      g.add(solid(stake));
     }
-    const cloths = [fac.colors[0], fac.colors[1], '#c9b48a', '#a8743a'];
-    for (let i = 0; i < 7; i++) {
-      const a = i / 7 * Math.PI * 2 + 0.3, r = 10 + rng() * 5;
-      if (Math.abs(angleDiff(a, s.gate)) < 0.4) continue;
-      const tx = Math.cos(a) * r, tz = Math.sin(a) * r;
-      const tent = mesh(new T.ConeGeometry(2.6, 3.2, 6), rpick(rng, cloths));
-      tent.position.set(tx, ly(tx, tz) + 1.6, tz);
-      g.add(tent);
-      addObstacle(s.x + tx, s.z + tz, 2.4);
-    }
-    addFlag(0, 0, 9);
+    const types = [['auberge', BUILD.tente(fac.colors[0], 8)], ['forge', BUILD.enclume], ['tailleur', BUILD.tente(fac.colors[1], 6)],
+      ['atelier', BUILD.tente('#a8743a', 6)], ['caserne', BUILD.tente(fac.colors[0], 7)]];
+    types.forEach(([t, fn], i) => service(t, s.gate + Math.PI + (i - 2) * 1.0, 13, fn));
+    addFlag(3, -3, 9);
   }
-  // étals du marché
-  const clothes = ['#b8452e', '#2e6db8', '#d1a12c'];
-  for (let i = 0; i < 3; i++) {
-    const a = s.gate + Math.PI + (i - 1) * 0.9;
-    const sx = Math.cos(a) * 6, sz = Math.sin(a) * 6;
-    const stall = new T.Group();
-    stall.position.set(sx, ly(sx, sz), sz);
-    stall.rotation.y = -a + Math.PI / 2;
-    const table = mesh(new T.BoxGeometry(2.4, 0.9, 1.2), '#6e5538');
-    table.position.y = 0.45;
-    const tarp = mesh(new T.BoxGeometry(3, 0.1, 2), clothes[i]);
-    tarp.position.y = 2.3;
-    for (const [px, pz] of [[-1.3, -0.8], [1.3, -0.8], [-1.3, 0.8], [1.3, 0.8]]) {
-      const post = mesh(new T.BoxGeometry(0.1, 2.3, 0.1), '#4a3826');
-      post.position.set(px, 1.15, pz);
-      stall.add(post);
+  // étals du marché au centre
+  if (s.type !== 'repaire') {
+    const clothes = ['#b8452e', '#2e6db8', '#d1a12c'];
+    const nst = s.type === 'ville' ? 3 : 2;
+    for (let i = 0; i < nst; i++) {
+      const a = s.gate + (i - (nst - 1) / 2) * 1.1;
+      const sx = Math.cos(a) * 5, sz = Math.sin(a) * 5;
+      const stall = new T.Group();
+      stall.position.set(sx, ly(sx, sz), sz);
+      stall.rotation.y = -a + Math.PI / 2;
+      stall.add(box(2.4, 0.9, 1.2, '#6e5538', 0, 0.45, 0), box(3, 0.1, 2, clothes[i], 0, 2.3, 0));
+      for (const [px, pz] of [[-1.3, -0.8], [1.3, -0.8], [-1.3, 0.8], [1.3, 0.8]]) stall.add(box(0.1, 2.3, 0.1, '#4a3826', px, 1.15, pz));
+      g.add(stall);
+      addObstacle(s.x + sx, s.z + sz, 1.4);
+      s.stalls.push({ x: s.x + Math.cos(a) * 3.4, z: s.z + Math.sin(a) * 3.4, yaw: Math.atan2(Math.cos(a), Math.sin(a)) });
     }
-    stall.add(table, tarp);
-    g.add(stall);
-    addObstacle(s.x + sx, s.z + sz, 1.4);
-    // le marchand se tient entre l'étal et le centre
-    s.stalls.push({ x: s.x + Math.cos(a) * 7.6, z: s.z + Math.sin(a) * 7.6, yaw: Math.atan2(-Math.cos(a), -Math.sin(a)) });
+    s.services.push({ type: 'marche', name: `Marché ${deN(s.name)}`, keeper: genPerson(rng), x: s.x, z: s.z, yaw: 0, radius: 7 });
   }
   const label = textSprite(s.name);
-  label.position.y = s.type === 'ville' ? 18 : 13;
+  label.position.y = s.type === 'ville' ? 22 : 14;
   g.add(label);
   worldGroup.add(g);
   s.root = g;
 }
+const serviceAt = (p, s) => s && s.services.find(v => Math.hypot(p.x - v.x, p.z - v.z) < (v.radius || 3.2)) || null;
 
 function makeSettlement(def) {
   const s = {
     name: def.name, x: def.x, z: def.z, faction: def.faction, type: def.type || 'ville',
-    r: (def.type || 'ville') === 'camp' ? 22 : 34, capital: !!def.capital,
-    pop: def.pop || 100, garrison: def.garrison != null ? def.garrison : (def.type === 'camp' ? 5 : 8),
+    r: { camp: 22, repaire: 18 }[def.type] || 34, capital: !!def.capital,
+    pop: def.pop || 100, garrison: def.garrison != null ? def.garrison : ({ camp: 5, repaire: 6 }[def.type] || 8),
     guards: [], civilians: [], stock: def.stock || null, hist: def.hist || {},
   };
   s.h = heightAt(s.x, s.z);
@@ -438,10 +546,29 @@ function buildNode(n) {
     for (let i = 0; i < 6; i++) add(mesh(new T.DodecahedronGeometry(0.5, 0), '#7a4a3a'), 3 + rand(-1, 1), 0.3, 2 + rand(-1, 1));
     add(mesh(new T.BoxGeometry(1.2, 0.8, 2), '#5a4630'), -3, 0.6, 3);
     addObstacle(n.x, n.z - 4, 5.5);
+  } else if (n.type === 'elevage') {
+    const R2 = 9;
+    for (let i = 0; i < 16; i++) {
+      const a = i / 16 * Math.PI * 2;
+      const post = add(mesh(new T.BoxGeometry(0.15, 1.2, 0.15), '#6e5538'), Math.cos(a) * R2, 0.6, Math.sin(a) * R2);
+      const rail = add(mesh(new T.BoxGeometry(0.1, 0.1, 2 * Math.PI * R2 / 16), '#7a5a38'), Math.cos(a + 0.2) * R2, 0.9, Math.sin(a + 0.2) * R2);
+      rail.rotation.y = -a - 0.2;
+      post.rotation.y = -a;
+    }
+    for (let i = 0; i < 4; i++) {
+      const beast = makeAnimalModel({ size: 1.1, color: rng() < 0.5 ? '#8a6a48' : '#c9b48a' });
+      const bx = rand(-5, 5), bz = rand(-5, 5);
+      beast.root.position.set(bx, ly(bx, bz), bz);
+      beast.root.rotation.y = rng() * 6;
+      g.add(beast.root);
+    }
+    add(mesh(new T.BoxGeometry(3, 2.4, 3), '#8a6a48'), 11, 1.2, 4);
+    addObstacle(n.x + 11, n.z + 4, 2);
   } else if (n.type === 'sel') {
     for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) add(mesh(new T.BoxGeometry(4, 0.12, 4), '#dfe8ec', false), -5 + i * 5, 0.05, -5 + j * 5);
     for (let i = 0; i < 4; i++) add(mesh(new T.ConeGeometry(0.9, 1.2, 6), '#f4f4f0'), 8, 0.6, -4 + i * 2.5);
   }
+  if (n.workshop) buildWorkshop(n, g, ly);
   const fp = makeFlagPole(nodeFlag(n), 6);
   fp.g.position.set(-4, ly(-4, 7), 7);
   g.add(fp.g);
@@ -451,6 +578,15 @@ function buildNode(n) {
   g.add(label);
   worldGroup.add(g);
   n.root = g;
+}
+function buildWorkshop(n, g, ly) {
+  const w = new T.Group();
+  w.position.set(-8, ly(-8, -6), -6);
+  w.add(part(0.9, 0.5, 0.4, '#3a3a3a', 0, 0.9, 0), part(0.4, 0.6, 0.3, '#5a4630', 0, 0.35, 0), part(2, 0.9, 1, '#6e5538', 2.4, 0.45, 0));
+  for (const [x, z] of [[-1.5, -1.5], [3.9, -1.5], [-1.5, 1.5], [3.9, 1.5]]) w.add(part(0.15, 2.6, 0.15, '#4a3826', x, 1.3, z));
+  w.add(part(6, 0.15, 3.6, '#7a5a38', 1.2, 2.6, 0));
+  g.add(w);
+  n.workshopMesh = w;
 }
 const nodeAt = (p, r = 14) => state.nodes.find(n => Math.hypot(p.x - n.x, p.z - n.z) < r) || null;
 
@@ -479,7 +615,7 @@ function generateWorld(seed, keepFactions = null) {
   const hue0 = rng();
   const facs = [];
   for (let i = 0; i < nf; i++) facs.push(genFaction(rng, { hue: hue0 + i / nf + rng() * 0.05 }));
-  facs.push(genFaction(rng, { bandit: true }));
+  facs.push(genFaction(rng, { bandit: true }), genFaction(rng, { cannibal: true }));
   for (const f of facs) { state.factions[f.id] = f; state.rep[f.id] = f.bandit ? -100 : 0; }
   const majors = facs.filter(f => !f.bandit);
   for (const a of majors) for (const b of majors) if (a.id < b.id) state.relations[relKey(a.id, b.id)] = 'peace';
@@ -516,7 +652,18 @@ function generateWorld(seed, keepFactions = null) {
       }
     }
   }
-  FLAT_SPOTS = sites.map(s => ({ x: s.x, z: s.z, r: s.type === 'camp' ? 24 : 36, h: rawHeight(s.x, s.z) }));
+  // repaires des brigands (déserts, steppes) et des cannibales (forêts, montagnes)
+  for (const f of facs.filter(f => f.bandit)) {
+    const wanted = f.culture === 'cannibale' ? ['foret', 'montagne'] : ['desert', 'steppe', 'sel'];
+    for (let k = 0; k < 2; k++) {
+      for (let t = 0; t < 400; t++) {
+        const x = (rng() - 0.5) * WORLD, z = (rng() - 0.5) * WORLD;
+        if (!wanted.includes(biomeAt(x, z)) && t < 300) continue;
+        if (okSite(x, z, 200)) { sites.push({ x, z, faction: f.id, type: 'repaire', name: uniqueName(), pop: 30 }); break; }
+      }
+    }
+  }
+  FLAT_SPOTS = sites.map(s => ({ x: s.x, z: s.z, r: { camp: 24, repaire: 20 }[s.type] || 36, h: rawHeight(s.x, s.z) }));
   buildHeightGrid();
   buildTerrain();
 
@@ -530,7 +677,7 @@ function generateWorld(seed, keepFactions = null) {
     let type = null;
     if (b === 'montagne') type = e < 0.7 ? 'fer' : null;
     else if (b === 'foret') type = rng() < 0.6 ? 'bois' : 'ferme';
-    else if (b === 'steppe') type = rng() < 0.5 ? 'ferme' : 'coton';
+    else if (b === 'steppe') { const r = rng(); type = r < 0.4 ? 'ferme' : r < 0.7 ? 'coton' : 'elevage'; }
     else if (b === 'desert') type = rng() < 0.3 ? 'epices' : null;
     else if (b === 'sel') type = 'sel';
     if (type) nodeSpots.push({ x, z, type });
@@ -542,7 +689,7 @@ function generateWorld(seed, keepFactions = null) {
   buildDecor(rng, sites, nodeSpots);
   for (const s of sites) makeSettlement(s);
   for (const ns of nodeSpots) {
-    const near = nearestSettlement(ns);
+    const near = nearestSettlement(ns, s => !F(s.faction).bandit);
     const n = { id: uid(), type: ns.type, x: ns.x, z: ns.z, owner: near && d2(near, ns) < 260 ? near.name : null,
       stock: 0, workers: [], disabled: 0 };
     state.nodes.push(n);

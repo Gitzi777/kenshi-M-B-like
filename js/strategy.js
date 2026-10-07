@@ -69,7 +69,11 @@ function materialize(p) {
   p.mat = true;
   p.units = p.troops.map((troop, i) => {
     const a = i * 2.4, r = i ? 1.5 + i * 0.5 : 0;
-    return makeTroop(p.faction, troop, p.x + Math.cos(a) * r, p.z + Math.sin(a) * r, { party: p, banner: i === 0 && p.kind !== 'bandits' });
+    const extra = { party: p, banner: i === 0 && p.kind !== 'bandits' };
+    if (i === 0 && troop === 'general' && p.general) Object.assign(extra, { name: p.general, title: 'Général', rank: 'general' });
+    else if (i === 0 && p.kind === 'patrol') Object.assign(extra, { name: p.captain || (p.captain = genPerson()), title: 'Capitaine', rank: 'captain' });
+    else if (i === 0 && p.kind === 'caravan') Object.assign(extra, { name: p.captain || (p.captain = genPerson()), title: 'Maître de caravane', rank: 'captain' });
+    return makeTroop(p.faction, troop, p.x + Math.cos(a) * r, p.z + Math.sin(a) * r, extra);
   });
 }
 function dematerialize(p) {
@@ -96,10 +100,63 @@ function spawnPatrol(fid) {
   return makeParty(fid, 'patrol', g.x, g.z, rollTroops(fid, randInt(3, 6), 'patrol'), { home: s.name });
 }
 const spawnCaravan = fid => planCaravan(fid);
-function spawnBandits(near) {
-  const pt = near || randomWildPoint();
+function spawnBandits(near, fid = 'bandits') {
+  if (!F(fid) || !F(fid).alive) return null;
+  let pt = near;
+  if (!pt) {
+    const lairs = settlementsOf(fid);
+    if (lairs.length && Math.random() < 0.7) {
+      const l = pick(lairs), a = rand(0, Math.PI * 2), r = rand(40, 140);
+      pt = { x: clamp(l.x + Math.cos(a) * r, -HALF + 20, HALF - 20), z: clamp(l.z + Math.sin(a) * r, -HALF + 20, HALF - 20) };
+      if (player && d2(pt, player.pos) < SPAWN_DIST + 10) pt = randomWildPoint();
+    } else pt = randomWildPoint();
+  }
   const n = clamp(randInt(2, 3) + Math.floor(state.day / 2), 2, 7);
-  return makeParty('bandits', 'bandits', pt.x, pt.z, rollTroops('bandits', n, 'bandits'));
+  return makeParty(fid, 'bandits', pt.x, pt.z, rollTroops(fid, n, 'bandits'));
+}
+
+// ---------- Hiérarchie : souverain, généraux, capitaines ----------
+function ensureHierarchy(f) {
+  if (f.bandit) return;
+  if (!f.generals) f.generals = [genPerson(), genPerson(), genPerson()].slice(0, 2 + (Math.random() < 0.5 ? 1 : 0)).map(name => ({ name, status: 'libre' }));
+}
+function freeGeneral(f) {
+  ensureHierarchy(f);
+  return f.generals.find(g => g.status === 'libre') || null;
+}
+function generalByName(f, name) { return f && f.generals ? f.generals.find(g => g.name === name) : null; }
+function releaseGeneral(p, died) {
+  const g = generalByName(F(p.faction), p.general);
+  if (!g) return;
+  g.status = died ? 'mort' : 'libre';
+  if (died) addChronicle(`Le général ${g.name} ${F(p.faction).of} est tombé ${placeName(p)}.`, '⚰');
+}
+function generalFell(u, by) {
+  const f = F(u.faction);
+  const g = generalByName(f, u.name);
+  if (g) g.status = 'mort';
+  if (u.party) u.party.general = null;
+  addChronicle(`Le général ${u.name} ${f.of} a été tué${by && isPlayerSide(by) ? ` par ${by.name}` : ''} ${placeName(u.pos)}.`, '⚰');
+  if (by && isPlayerSide(by)) state.rep[f.id] = (state.rep[f.id] || 0) - 15;
+}
+function rulerFell(u, by) {
+  const f = F(u.faction);
+  const old = f.leader;
+  f.leader = `${pick(LEADER_TITLE)} ${genName()}`;
+  addChronicle(`${old} ${f.of} a été assassiné${by && isPlayerSide(by) ? ` par ${by.name}` : ''} ! ${f.leader} prend le pouvoir.`, '👑');
+  if (by && isPlayerSide(by)) state.rep[f.id] = (state.rep[f.id] || 0) - 50;
+  if (Math.random() < 0.4) eventSplit(f);
+}
+function promoteGenerals() {
+  for (const f of majorFactions()) {
+    ensureHierarchy(f);
+    const active = f.generals.filter(g => g.status !== 'mort');
+    if (active.length < 2 && Math.random() < 0.5) {
+      const name = genPerson();
+      f.generals = f.generals.filter(g => g.status !== 'mort').concat({ name, status: 'libre' });
+      addChronicle(`${name} est promu général ${f.of}.`, '🎖');
+    }
+  }
 }
 function raiseArmy(fid) {
   const enemies = enemiesOf(fid);
@@ -108,10 +165,14 @@ function raiseArmy(fid) {
   if (!targets.length || !own.length) return null;
   let best = null, bd = Infinity, from = null;
   for (const o of own) for (const t of targets) { const d = d2(o, t); if (d < bd) { bd = d; best = t; from = o; } }
+  const gen = freeGeneral(F(fid));
+  if (!gen) return null;
   const g = gatePos(from, -12);
-  const p = makeParty(fid, 'army', g.x, g.z, rollTroops(fid, randInt(7, 11), 'army'), { target: best.name, home: from.name });
+  const p = makeParty(fid, 'army', g.x, g.z, ['general', ...rollTroops(fid, randInt(7, 11), 'army')], { target: best.name, home: from.name });
   p.dest = { x: best.x, z: best.z };
-  addChronicle(`${theF(F(fid), true)} ${vb(F(fid), 'lève', 'lèvent')} une armée à ${from.name} et ${vb(F(fid), 'marche', 'marchent')} sur ${best.name}.`, '📯');
+  p.general = gen.name;
+  gen.status = 'armée';
+  addChronicle(`Le général ${gen.name} lève une armée ${F(fid).of} à ${from.name} et marche sur ${best.name}.`, '📯');
   return p;
 }
 
@@ -124,8 +185,9 @@ function autoBattle(a, b) {
   const where = placeName(lose);
   if (lose.kind === 'caravan' && F(win.faction).bandit) addChronicle(`${theF(F(win.faction), true)} ${vb(F(win.faction), 'a', 'ont')} pillé une caravane ${F(lose.faction).of} ${where}.`, '🐺');
   else if (lose.kind === 'army' || win.kind === 'army') addChronicle(`Bataille ${where} : ${theF(F(win.faction))} ${vb(F(win.faction), 'écrase', 'écrasent')} l'${lose.kind === 'army' ? 'armée' : 'escorte'} ${F(lose.faction).of}.`, '⚔');
+  if (lose.general) releaseGeneral(lose, Math.random() < 0.5);
   removeParty(lose);
-  if (!win.troops.length) removeParty(win);
+  if (!win.troops.length) { if (win.general) releaseGeneral(win, true); removeParty(win); }
 }
 
 function siege(p, s) {
@@ -134,10 +196,12 @@ function siege(p, s) {
   const def = (s.garrison * 1.3 + 2) * (s.capital ? 1.3 : 1) * rand(0.8, 1.2);
   if (atk > def) {
     const survivors = Math.max(2, Math.round(partyTroops(p).length * 0.6));
+    if (p.general) releaseGeneral(p, false);
     removeParty(p);
     captureSettlement(s, p.faction, survivors);
   } else {
     s.garrison = Math.max(1, Math.round(s.garrison - atk / 1.5));
+    if (p.general) releaseGeneral(p, Math.random() < 0.4);
     removeParty(p);
     addChronicle(`${s.name} a repoussé l'assaut ${F(p.faction).of}. Les murs tiennent.`, '🛡');
   }
@@ -162,6 +226,14 @@ function spawnGuards(s) {
   s.reinforce = 0;
   const n = Math.min(s.garrison, 6);
   for (let i = 0; i < n; i++) addGuard(s, i);
+  // le souverain réside au palais de sa capitale
+  const palace = s.services && s.services.find(v => v.type === 'palais');
+  const fac = F(s.faction);
+  if (palace && !fac.bandit) {
+    const u = makeTroop(s.faction, 'general', palace.x, palace.z, { guardOf: s, name: fac.leader, title: '', rank: 'ruler', banner: true });
+    u.home = { x: palace.x, z: palace.z, yaw: palace.yaw };
+    s.guards.push(u);
+  }
 }
 function addGuard(s, i) {
   const fac = F(s.faction);
@@ -172,7 +244,7 @@ function addGuard(s, i) {
   const [a, r] = spots[i % spots.length];
   const x = s.x + Math.cos(a) * r, z = s.z + Math.sin(a) * r;
   const troop = fac.bandit ? 'pillard' : (i === 2 || i === 3 ? 'archer' : 'veteran');
-  const u = makeTroop(s.faction, troop, x, z, { guardOf: s, name: `Garde ${fac.of}` });
+  const u = makeTroop(s.faction, troop, x, z, { guardOf: s, title: 'Garde' });
   u.home = { x, z, yaw: Math.atan2(Math.cos(s.gate), Math.sin(s.gate)) };
   s.guards.push(u);
 }
@@ -247,7 +319,7 @@ function updateParties(dt) {
     if (p.mat) {
       const leader = p.units.find(alive);
       if (!leader) {
-        if (p.kind === 'army') addChronicle(`L'armée ${f.of} a été anéantie ${placeName(p)}.`, '⚔');
+        if (p.kind === 'army') { addChronicle(`L'armée ${f.of} a été anéantie ${placeName(p)}.`, '⚔'); if (p.general) releaseGeneral(p, true); }
         removeParty(p);
         continue;
       }
@@ -299,7 +371,7 @@ function spawnTick() {
     if (own.length && ps.filter(p => p.kind === 'caravan').length < own.length + 1 && Math.random() < 0.5) planCaravan(f.id);
     if (enemiesOf(f.id).length && !ps.some(p => p.kind === 'army') && Math.random() < 0.12) raiseArmy(f.id);
   }
-  if (partiesOf('bandits').length < 9) spawnBandits();
+  for (const f of aliveFactions().filter(f => f.bandit)) if (partiesOf(f.id).length < (f.id === 'bandits' ? 7 : 5)) spawnBandits(null, f.id);
 }
 
 // ---------- Événements mondiaux ----------
@@ -314,6 +386,7 @@ function createFaction(parent, place) {
   f.parent = parent ? parent.id : null;
   state.factions[f.id] = f;
   state.rep[f.id] = parent ? (state.rep[parent.id] || 0) : 0;
+  ensureHierarchy(f);
   for (const o of majorFactions()) {
     if (o.id === f.id) continue;
     const rel = parent && o.id !== parent.id ? (state.relations[relKey(parent.id, o.id)] || 'peace') : 'peace';
@@ -323,11 +396,11 @@ function createFaction(parent, place) {
   return f;
 }
 
-function eventSplit() {
+function eventSplit(forced) {
   if (majorFactions().length >= 9) return false;
   const candidates = majorFactions().filter(f => settlementsOf(f.id).length >= 2);
   if (!candidates.length) return false;
-  const parent = pick(candidates);
+  const parent = forced && candidates.includes(forced) ? forced : pick(candidates);
   const towns = settlementsOf(parent.id).filter(s => !s.capital);
   const s = pick(towns.length ? towns : settlementsOf(parent.id).slice(1));
   if (!s) return false;
@@ -464,7 +537,8 @@ function updateWorld(dt) {
   state.garrisonTimer -= dt;
   if (state.garrisonTimer <= 0) {
     state.garrisonTimer = 60;
-    for (const s of state.settlements) s.garrison = Math.min(s.type === 'camp' ? 6 : 10, s.garrison + 1);
+    for (const s of state.settlements) s.garrison = Math.min(s.type === 'ville' ? 10 : 6, s.garrison + 1);
+    promoteGenerals();
   }
   updateEconomy(dt);
 }
@@ -472,7 +546,9 @@ function updateWorld(dt) {
 // premier peuplement du monde
 function populateWorld() {
   for (const f of majorFactions()) { spawnPatrol(f.id); spawnPatrol(f.id); spawnCaravan(f.id); }
-  for (let i = 0; i < 7; i++) spawnBandits();
+  for (let i = 0; i < 5; i++) spawnBandits();
+  for (let i = 0; i < 4; i++) spawnBandits(null, 'cannibales');
+  for (const f of majorFactions()) ensureHierarchy(f);
   for (let i = 0; i < 5; i++) recordHistory();
   for (const k in state.relations) {
     if (state.relations[k] === 'war') {

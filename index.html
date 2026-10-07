@@ -61,13 +61,15 @@
     <div id="log"></div>
     <canvas id="minimap" width="180" height="180"></canvas>
     <div id="controls" class="panel">
-      <b>ZQSD</b> bouger · <b>Maj</b> courir · <b>Souris</b> caméra · <b>Molette</b> zoom<br>
+      <b>ZQSD</b> bouger · <b>Maj</b> courir / marcher · <b>Souris</b> caméra · <b>Molette</b> zoom<br>
       <b>Clic</b> frapper · <b>Clic droit</b> parer · <b>X</b> arc / mêlée<br>
-      <b>E</b> ville / exploitation · <b>F</b> fouiller · <b>I</b> inventaire · <b>M</b> carte<br>
-      <b>1 2 3</b> ordres · <b>T</b> temps accéléré · <b>O</b> réglages · <b>Échap</b> libérer la souris
+      <b>E</b> bâtiment / exploitation · <b>F</b> fouiller · <b>I</b> inventaire · <b>M</b> carte<br>
+      <b>V</b> vue tactique · <b>C</b> changer de perso · <b>T</b> temps · <b>O</b> réglages
     </div>
     <div id="dirInd"><span class="d-haut">▲</span><span class="d-gauche">◀</span><span class="d-droite">▶</span><span class="d-estoc">▼</span><i>+</i></div>
     <div id="threat"></div>
+    <div id="ordersBar"></div>
+    <div id="selbox" class="hidden"></div>
   </div>
 
   <div id="town" class="panel big-panel hidden"></div>
@@ -85,6 +87,7 @@
   <script src="js/units.js"></script>
   <script src="js/strategy.js"></script>
   <script src="js/economy.js"></script>
+  <script src="js/wildlife.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/main.js"></script>
 </body>

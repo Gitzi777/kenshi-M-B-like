@@ -161,3 +161,14 @@ label.row input[type=range] { flex: 1; }
 .rowb { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
 .wflags { margin-top: 6px; line-height: 1.8; }
 #dirInd.simple span { display: none; }
+
+/* Ordres, sélection, escouade */
+#ordersBar { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; gap: 6px; font-size: 12px; }
+#ordersBar span { background: rgba(20,15,10,.8); border: 1px solid #6b5536; border-radius: 4px; padding: 3px 7px; }
+#ordersBar span.on { border-color: #ffcf7a; background: rgba(154, 90, 34, .8); }
+#selbox { position: absolute; border: 1px solid #7dff7d; background: rgba(125,255,125,.1); pointer-events: none; }
+.member { cursor: pointer; border-radius: 4px; padding: 2px 4px; }
+.member:hover { background: rgba(255,255,255,.07); }
+.member.sel { background: rgba(125, 255, 125, .12); }
+.row button.on { background: #9a5a22; border-color: #ffcf7a; }
+#log { bottom: 44px; }

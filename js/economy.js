@@ -16,11 +16,11 @@ function price(s, g) {
   return { buy: Math.max(1, Math.round(p * disc)), sell: Math.max(1, Math.round(p * 0.85)) };
 }
 function itemBuyPrice(s, id) {
-  const it = ITEMS[id];
+  const it = IT(id);
   const k = clamp(marketPrice(s, it.mat) / GOODS[it.mat].base, 0.7, 1.8);
   return Math.round(it.price * k * (state.allegiance === s.faction ? 0.8 : 1));
 }
-const itemSellPrice = id => Math.max(1, Math.round(ITEMS[id].price * 0.45));
+const itemSellPrice = id => Math.max(1, Math.round(IT(id).price * 0.45));
 const nodePrice = n => Math.round(RESOURCES[n.type].rate * GOODS[RESOURCES[n.type].good].base * 7);
 const nodeIndex = n => state.nodes.indexOf(n);
 const nodeWorkers = n => squad().filter(a => a.assignedNode === nodeIndex(n));
@@ -125,11 +125,12 @@ function claimNode(n, bought) {
 }
 
 // ---------- Vie des civils (visible seulement près de toi) ----------
-function makeCivilian(fid, x, z, task, name) {
+function makeCivilian(fid, x, z, task, title) {
   const fac = F(fid);
+  const name = genPerson();
   const tool = task.type === 'work' ? (task.good === 'iron' || task.good === 'wood' ? 'hache' : 'baton') : null;
   return makeUnit({
-    faction: fid, civil: true, task, x, z, name, maxHp: 40, speed: 3.2,
+    faction: fid, civil: true, task, x, z, name, title, maxHp: 40, speed: 3.2,
     equip: { weapon: tool, armor: 'tunique', helmet: task.type === 'stall' ? 'turban' : (Math.random() < 0.5 ? 'capuche' : null) },
     look: { body: pick(['#8a6a48', '#6e5a40', '#9a8a68', fac ? fac.colors[0] : '#7a5a3a']), pants: '#3b2f22', skin: pick(SKIN_COLORS), height: rand(0.92, 1.05) },
   });
@@ -158,6 +159,13 @@ function despawnNodeCivilians(n) {
 
 function spawnTownCivilians(s) {
   s.civilians = [];
+  if (s.type === 'repaire') return;
+  for (const v of s.services) {
+    if (v.type === 'marche') continue;
+    const u = makeCivilian(s.faction, v.x, v.z, { type: 'stall', x: v.x, z: v.z, yaw: v.yaw, town: s.name, timer: 999 }, SERVICE_KEEPER[v.type]);
+    u.name = v.keeper;
+    s.civilians.push(u);
+  }
   for (const st of s.stalls) {
     s.civilians.push(makeCivilian(s.faction, st.x, st.z, { type: 'stall', x: st.x, z: st.z, yaw: st.yaw, town: s.name, timer: rand(2, 8) }, 'Marchand'));
   }
