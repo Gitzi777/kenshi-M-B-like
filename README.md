@@ -9,7 +9,7 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
 ## Contenu
 
 - **Monde procédural** : chaque monde vient d'une graine. Relief, 5 biomes (désert, steppe, forêt, montagnes,
-  marais salants), 4 à 6 factions générées (nom, couleurs, drapeau, style de troupes), villes et camps.
+  marais salants), 3 ou 4 factions générées (nom, couleurs, drapeau, style de troupes), villes et camps.
 - **Ressources** : champs de céréales, camps de bûcherons, gisements de fer, plantations de coton et d'épices,
   salines, chacune dans son biome. Récolte à la main, rachète une exploitation ou revendique-la,
   et mets tes compagnons au travail.
@@ -30,6 +30,11 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
   des capitaines de patrouille. Tous les PNJ ont un nom.
 - **Escouade façon Kenshi** : prends le contrôle de n'importe quel membre (C ou clic sur son nom). Les membres
   tombent K.O. au lieu de mourir. Vue tactique (V) : sélection à la souris, clic droit pour déplacer ou attaquer.
+- **Bandits variés** : pillards (dépouillent), rançonneurs (neutres, exigent un péage), esclavagistes
+  (capturent et enferment dans leur camp), cannibales. Bandits et cannibales lancent des raids et peuvent
+  prendre des villes ; les factions lèvent des armées pour les reprendre.
+- **Esclavage** : certaines factions l'autorisent (marché aux esclaves : acheter, vendre des prisonniers
+  ou des compagnons), d'autres l'interdisent.
 - **Dangers** : hyènes, loups, ours, scorpions géants (plus nombreux la nuit, ils attaquent aussi les villageois), gibier à chasser pour la viande
   et le cuir, cannibales et brigands avec leurs repaires, tempêtes de sable dans le désert.
 - **Combat** : parade automatique par défaut, combat directionnel en option. Arcs et flèches.

@@ -12,7 +12,7 @@ const CARRY_PER_MEMBER = 20;
 const MAX_SQUAD = 8;
 const SPAWN_DIST = 120;          // un groupe apparaît en 3D à moins de 120 m
 const DESPAWN_DIST = 170;
-const SAVE_KEY = 'terres-arides-save-v3';
+const SAVE_KEY = 'terres-arides-save-v4';
 const SETTINGS_KEY = 'terres-arides-settings-v2';
 
 // ---------- Utilitaires ----------

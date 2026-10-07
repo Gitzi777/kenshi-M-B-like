@@ -319,7 +319,8 @@ const damageOf = u => Math.round(weaponOf(u).dmg + u.str);
 function playerHostileTo(fid) {
   const f = F(fid);
   if (!f || fid === 'player') return false;
-  if (f.bandit) return true;
+  // les rançonneurs restent neutres tant qu'on paie leur péage
+  if (f.bandit) return f.behavior !== 'racket' || (state.tollAngry && state.tollAngry[fid] > (state.clock || 0)) || (state.rep[fid] || 0) <= -20;
   if ((state.rep[fid] || 0) <= -20) return true;
   if (state.allegiance && state.allegiance !== fid && state.relations[relKey(state.allegiance, fid)] === 'war') return true;
   return false;
@@ -596,7 +597,12 @@ function steer(u, tx, tz, dt, speedMul = 1, stop = 0.3) {
   const step = Math.min(d - stop + 0.01, speedOf(u) * speedMul * dt);
   const nx = u.pos.x + dx / d * step, nz = u.pos.z + dz / d * step;
   const f = F(u.faction);
-  if (((f && f.bandit) || u.animal) && nearSettlement(nx, nz, 6) && !settlementAt(u.pos, 6)) { u.moving = 0; return false; }
+  // bêtes et bandits restent hors des villes, sauf les bandits en raid ou chez eux
+  const raider = u.party && u.party.kind === 'army';
+  if ((u.animal || (f && f.bandit && !raider && !u.guardOf)) && !settlementAt(u.pos, 6)) {
+    const st = settlementAt({ x: nx, z: nz }, 6);
+    if (st && (u.animal || st.faction !== u.faction)) { u.moving = 0; return false; }
+  }
   u.pos.x = nx; u.pos.z = nz;
   u.moving = speedMul;
   return false;
@@ -645,10 +651,10 @@ function separate() {
 function nearestHostile(u, range, from = u.pos) {
   let best = null, bd = range;
   const f = F(u.faction);
-  const avoidTowns = (f && f.bandit) || u.animal;
+  const avoidTowns = (f && f.bandit && !(u.party && u.party.kind === 'army') && !u.guardOf) || u.animal;
   for (const o of units) {
     if (!alive(o) || o === u || (o.civil && !u.animal) || o.jailed || !hostile(u, o)) continue;
-    if (avoidTowns && settlementAt(o.pos, 2) && settlementAt(o.pos, 2).type !== 'repaire') continue;
+    if (avoidTowns) { const st = settlementAt(o.pos, 2); if (st && st.type !== 'repaire' && st.faction !== u.faction) continue; }
     const d = d2(from, o.pos);
     if (d < bd) { bd = d; best = o; }
   }
@@ -814,7 +820,10 @@ function updateNPC(u, dt, idx) {
   u.retarget -= dt;
   if (u.target && (!alive(u.target) || u.target.jailed || !hostile(u, u.target) || d2(u.pos, u.target.pos) > 70)) u.target = null;
   const fac = F(u.faction);
-  if (fac && fac.bandit && u.target && settlementAt(u.target.pos, 2) && settlementAt(u.target.pos, 2).type !== 'repaire') u.target = null;
+  if (fac && fac.bandit && u.target && !u.guardOf && !(u.party && u.party.kind === 'army')) {
+    const st = settlementAt(u.target.pos, 2);
+    if (st && st.type !== 'repaire' && st.faction !== u.faction) u.target = null;
+  }
   if (u.retarget <= 0) {
     u.retarget = rand(0.4, 0.7);
     if (u.guardOf) pickTarget(u, 35, u.home);

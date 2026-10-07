@@ -52,7 +52,7 @@ const recruitCost = () => 80 + 50 * squad().length;
 function repLabel(fid) {
   const f = F(fid);
   if (state.allegiance === fid) return ['Ton suzerain', 'good'];
-  if (f.bandit || playerHostileTo(fid)) return ['Ennemi', 'bad'];
+  if (playerHostileTo(fid)) return ['Ennemi', 'bad'];
   const r = state.rep[fid] || 0;
   if (r < 0) return ['Méfiant', 'warn'];
   if (r < 15) return ['Neutre', ''];
@@ -201,7 +201,7 @@ function drawMinimap() {
 }
 
 // ---------- Panneaux ----------
-const PANELS = { town: 'town', inv: 'inventory', loot: 'loot', map: 'worldmap', node: 'nodepanel', settings: 'settings', lock: 'lockpanel' };
+const PANELS = { town: 'town', inv: 'inventory', loot: 'loot', map: 'worldmap', node: 'nodepanel', settings: 'settings', lock: 'lockpanel', toll: 'tollpanel' };
 function openPanel(name) {
   state.panel = name;
   state.craftStation = null;
@@ -216,7 +216,7 @@ function closePanel() {
 }
 function togglePanel(name) { if (state.panel === name) closePanel(); else openPanel(name); }
 function renderPanel() {
-  const r = { town: renderTown, inv: renderInventory, loot: renderLoot, map: renderMap, node: renderNode, settings: renderSettings, lock: renderLock }[state.panel];
+  const r = { town: renderTown, inv: renderInventory, loot: renderLoot, map: renderMap, node: renderNode, settings: renderSettings, lock: renderLock, toll: renderToll }[state.panel];
   if (r) r();
 }
 
@@ -224,6 +224,7 @@ function renderPanel() {
 const SERVICE_TABS = {
   marche: [['marche', 'Marché']],
   auberge: [['taverne', 'Taverne']],
+  esclaves: [['esclaves', 'Esclaves']],
   bazar: [['bazar', 'Bazar']],
   prison: [['prison', 'Prison']],
   forge: [['armurier', 'Boutique'], ['artisanat', 'Forger']],
@@ -293,6 +294,8 @@ function renderTown() {
         <button data-recruit="${i}" ${state.money < cost || full ? 'disabled' : ''}>Engager (${cost} 💰)</button></div>`).join('') || '<small>Plus personne à engager aujourd\'hui.</small>'}</div>
       <button data-rest ${state.money < 10 ? 'disabled' : ''}>Louer des lits jusqu'au matin, tout le monde soigné (10 💰)</button>
       <h4>On raconte que…</h4><ul class="rumors">${rumors || '<li>Rien de neuf.</li>'}</ul>`;
+  } else if (state.townTab === 'esclaves') {
+    body = slaveMarketHTML(s);
   } else if (state.townTab === 'bazar') {
     const ironK = clamp(marketPrice(s, 'iron') / GOODS.iron.base, 0.7, 1.8);
     const items = [['picks', Math.round(6 * ironK), 1], ['kits', Math.round(25 * clamp(marketPrice(s, 'cloth') / GOODS.cloth.base, 0.7, 1.8)), 1], ['arrows', 10, 10], ['food', price(s, 'food').buy, 1]];
@@ -409,6 +412,7 @@ function factionDetail(f, inTown) {
       ${f.founded ? `<br>Fondée au jour ${f.founded}` : ''}</p>
     ${f.bandit ? '' : `<h4>Hiérarchie</h4><ul class="rels"><li>👑 ${esc(f.leader)}, souverain</li>${(f.generals || []).map(g => `<li>🎖 Général ${esc(g.name)} : ${g.status === 'mort' ? '<span class="bad">mort</span>' : g.status === 'armée' ? '<span class="warn">en campagne</span>' : 'au repos'}</li>`).join('')}
       <li>🛡 ${partiesOf(f.id).filter(p => p.kind === 'patrol').length} capitaines de patrouille</li></ul>`}
+    <p>Esclavage : ${f.slavery ? '<span class="badge warn">autorisé</span>' : '<span class="badge good">interdit</span>'}${f.behavior === 'racket' ? ' · rançonneurs : neutres tant qu\'on paie leur péage' : f.behavior === 'slaver' ? ' · capturent leurs victimes' : ''}</p>
     <p>Ta réputation : ${relBadge(f.id)}</p>
     <h4>Relations</h4><ul class="rels">${rels || '<li>Aucune.</li>'}</ul>
     ${actions}</div>`;
@@ -449,6 +453,7 @@ $('town').addEventListener('click', e => {
     if (id) { player.inv.splice(Number(d.sellitem), 1); state.money += itemSellPrice(id); trade(s); }
   } else if (d.recruit != null && 'recruit' in d) recruit(s, false, Number(d.recruit));
   else if ('recruitvet' in d) recruit(s, true);
+  else if (d.buyslave != null || 'sellcarried' in d || d.sellmember) slaveMarketClick(d, s);
   else if (d.bz) {
     const p = Number(d.p), n = Number(d.n);
     if (state.money >= p) { state.money -= p; state.goods[d.bz] += n; }
@@ -936,7 +941,7 @@ function saveGame(silent) {
     nodes: state.nodes.map(n => ({ owner: n.owner, stock: n.stock, disabled: n.disabled, workshop: !!n.workshop })),
     parties: state.parties.map(p => ({ faction: p.faction, kind: p.kind, x: p.x, z: p.z, troops: partyTroops(p), dest: p.dest,
       home: p.home, target: p.target, cargo: p.cargo || null })),
-    chronicle: state.chronicle, trades: state.trades, saved: Date.now(), jail: state.jail,
+    chronicle: state.chronicle, trades: state.trades, saved: Date.now(), jail: state.jail, tollPaid: state.tollPaid, tollAngry: state.tollAngry,
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -960,6 +965,7 @@ function loadGame(data) {
     money: data.money, goods: { ...state.goods, ...data.goods }, day: data.day, dayTimer: data.dayTimer, kills: data.kills,
     order: data.order || 'follow', rep: data.rep, allegiance: data.allegiance, relations: data.relations,
     warSince: data.warSince || {}, clock: data.clock || 0, chronicle: data.chronicle || [], trades: data.trades || [],
+    tollPaid: data.tollPaid || {}, tollAngry: data.tollAngry || {},
   });
   for (const sd of data.settlements) {
     const s = settlementByName(sd.name);

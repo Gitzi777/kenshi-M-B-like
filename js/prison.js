@@ -21,8 +21,9 @@ function resolveDefeat(downed, captor) {
   for (const u of units) if (u.target && downed.includes(u.target)) u.target = null;
   if (document.pointerLockElement) document.exitPointerLock();
   const f = F(captor);
-  if (f && !f.bandit && f.alive) return imprison(downed, captor, false);
-  if (captor === 'cannibales') return imprison(downed, captor, true);
+  if (f && !f.bandit && f.alive) return imprison(downed, captor, 'prison');
+  if (captor === 'cannibales') return imprison(downed, captor, 'cannibal');
+  if (f && f.behavior === 'slaver') return imprison(downed, captor, 'slave');
   // brigands ou bêtes : on vous dépouille et on vous laisse au sol
   const lost = captor === 'bandits' ? Math.floor(state.money / 2) : 0;
   state.money -= lost;
@@ -34,13 +35,15 @@ function resolveDefeat(downed, captor) {
   addChronicle(`${player.name} et ses compagnons ont été laissés pour morts ${placeName(player.pos)}.`, '💀');
 }
 
-function imprison(downed, fid, cannibal) {
+function imprison(downed, fid, mode) {
   const f = F(fid);
-  const towns = state.settlements.filter(s => s.faction === fid && s.cells && s.cells.length);
+  const cannibal = mode === 'cannibal', slave = mode === 'slave';
+  const towns = state.settlements.filter(s => s.faction === fid && s.cells && s.cells.some(c => !c.market));
   if (!towns.length) return resolveDefeat(downed, 'bandits');
   const s = towns.reduce((a, b) => d2(a, player.pos) < d2(b, player.pos) ? a : b);
   const free = s.cells.filter(c => !c.open);
-  const cell = s.cells.find(c => !c.occupied) || s.cells[0];
+  const cells = s.cells.filter(c => !c.market);
+  const cell = cells.find(c => !c.occupied) || cells[0];
   const chest = s.chests.find(c => c.kind === 'confiscation');
   // confiscation de l'équipement
   for (const u of downed) {
@@ -63,14 +66,15 @@ function imprison(downed, fid, cannibal) {
   cell.occupied = true;
   closeCell(cell);
   despawnGuards(s); spawnGuards(s);
-  const days = cannibal ? 0 : (playerHostileTo(fid) ? 3 : 2);
-  state.jail = { ids: downed.map(u => u.id), town: s.name, faction: fid, cell: s.cells.indexOf(cell),
-    release: (state.clock || 0) + days * DAY_LENGTH, eatAt: cannibal ? (state.clock || 0) + DAY_LENGTH * 1.5 : null };
+  const days = cannibal || slave ? 0 : (playerHostileTo(fid) ? 3 : 2);
+  state.jail = { ids: downed.map(u => u.id), town: s.name, faction: fid, cell: s.cells.indexOf(cell), slave,
+    release: slave ? Infinity : (state.clock || 0) + days * DAY_LENGTH, eatAt: cannibal ? (state.clock || 0) + DAY_LENGTH * 1.5 : null };
   if (!downed.includes(player)) {} else if (team().some(u => !u.jailed && !(u.down > 0))) {
     logMsg('D\'autres membres de ton escouade sont libres : appuie sur C pour en prendre le contrôle et venir vous délivrer.', 'warn');
   }
-  showBanner(cannibal ? 'Capturés par les cannibales !' : 'Capturés !', cannibal
+  showBanner(cannibal ? 'Capturés par les cannibales !' : slave ? 'Réduits en esclavage !' : 'Capturés !', cannibal
     ? `Les ${f.name} vous enferment dans leur cage à ${s.name}. Ils vous mangeront dans un jour et demi si vous ne vous échappez pas. Crochète la porte (E) ou fais-vous délivrer.`
+    : slave ? `Les ${f.name} vous mettent aux fers dans leur camp de ${s.name}. Personne ne vous libérera : il faut crocheter la cage (E) ou qu'un compagnon libre vienne vous chercher.`
     : `${theF(f, true)} ${vb(f, 'vous jette', 'vous jettent')} en prison à ${s.name} pour ${days} jours. Ton équipement est dans un coffre de la prison. Attends (T pour accélérer) ou crochète la serrure (E près de la porte).`, 7);
   addChronicle(`${player.name} a été capturé et emprisonné à ${s.name}.`, '⛓');
 }
@@ -304,4 +308,103 @@ function finishOffNear(target) {
   if (loot) o.loot = loot;
   floatText(o.pos, 'achevé', '#ff6b6b');
   logMsg(`${player.name} achève ${o.name}.`);
+}
+
+// ---------- Rançonneurs : péage sur les routes ----------
+state.tollPaid = state.tollPaid || {};
+state.tollAngry = state.tollAngry || {};
+const tollPrice = () => Math.max(20, Math.round(state.money * 0.25));
+const tollFood = () => 2 + team().length;
+function updateToll() {
+  if (state.panel || !player || player.jailed) return;
+  for (const p of state.parties) {
+    if (!p.mat || p.kind !== 'bandits') continue;
+    const f = F(p.faction);
+    if (!f || f.behavior !== 'racket' || playerHostileTo(f.id) || (state.tollPaid[f.id] || 0) > (state.clock || 0)) continue;
+    const lead = p.units.find(alive);
+    if (!lead) continue;
+    const d = d2(lead.pos, player.pos);
+    if (d < 35) p.dest = { x: player.pos.x, z: player.pos.z };
+    if (d < 6 || (d < 15 && settlementAt(player.pos, 4))) { state.toll = { party: p, fid: f.id, lead }; openPanel('toll'); return; }
+  }
+}
+function renderToll() {
+  const t = state.toll;
+  if (!t) { closePanel(); return; }
+  const f = F(t.fid);
+  $('tollpanel').innerHTML = `
+    <div class="phead">${flagImg(f, 26)}<h3>${esc(displayName(t.lead))}</h3></div>
+    <div class="pbody">
+      <p>« Halte ! Ici c'est le territoire ${esc(f.of)}. Tu passes si tu paies : <b>${tollPrice()} 💰</b> ou <b>${tollFood()} 🌾 vivres</b>. Sinon on se sert sur ton cadavre. »</p>
+      <button data-tpay ${state.money >= tollPrice() ? '' : 'disabled'}>Payer ${tollPrice()} 💰</button>
+      <button data-tfood ${state.goods.food >= tollFood() ? '' : 'disabled'}>Donner ${tollFood()} vivres</button>
+      <button data-trefuse>Refuser (ils attaquent)</button>
+      <p class="note">Une fois payé, ils te laissent tranquille pendant un jour.</p>
+    </div>`;
+}
+$('tollpanel').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  const t = state.toll;
+  if (!b || !t) return;
+  const now = state.clock || 0;
+  if ('tpay' in b.dataset) { state.money -= tollPrice(); state.tollPaid[t.fid] = now + DAY_LENGTH; logMsg('Tu paies le péage. Ils te laissent passer.'); }
+  else if ('tfood' in b.dataset) { state.goods.food -= tollFood(); state.tollPaid[t.fid] = now + DAY_LENGTH; logMsg('Tu leur donnes des vivres. Ils te laissent passer.'); }
+  else { state.tollAngry[t.fid] = now + DAY_LENGTH * 0.5; logMsg(`« Mauvaise réponse. » ${theF(F(t.fid), true)} attaquent !`, 'warn'); }
+  const p = t.party;
+  if (state.tollPaid[t.fid] > now) p.dest = { x: p.x + rand(-80, 80), z: p.z + rand(-80, 80) };
+  state.toll = null;
+  closePanel();
+});
+
+// ---------- Marché aux esclaves ----------
+const slavePrice = u => Math.round(50 + u.maxHp * 0.6 + (u.level || 1) * 20 + (u.troop === 'veteran' || u.troop === 'chef' ? 60 : 0));
+function rollSlaves(s) {
+  const list = [];
+  for (let i = 0; i < randInt(2, 4); i++) {
+    const skills = { forge: 0, couture: 0, bois: 0, recolte: randInt(5, 30), crochetage: 0 };
+    if (Math.random() < 0.5) skills[pick(['forge', 'couture', 'bois'])] = randInt(10, 35);
+    list.push({ name: genPerson(), maxHp: randInt(60, 95), str: randInt(1, 4), skills, price: randInt(70, 150) });
+  }
+  state.slaves = { town: s.name, list };
+}
+function slaveMarketHTML(s) {
+  const f = F(s.faction);
+  if (!f.slavery) return `<p class="bad">${theF(f, true)} ${vb(f, 'interdit', 'interdisent')} l'esclavage : le marché est fermé.</p>`;
+  if (!state.slaves || state.slaves.town !== s.name) rollSlaves(s);
+  const c = player.carrying;
+  const full = squad().length + 1 >= MAX_SQUAD;
+  return `<h4>À vendre</h4><div class="items">${state.slaves.list.map((r, i) => `<div class="item"><span><b>${esc(r.name)}</b>
+      <small>❤ ${r.maxHp} · force ${r.str}${Object.entries(r.skills).filter(([, v]) => v >= 10).map(([k, v]) => ` · ${SKILLS[k]} ${v}`).join('')}</small></span>
+      <button data-buyslave="${i}" ${state.money < r.price || full ? 'disabled' : ''}>Acheter (${r.price} 💰)</button></div>`).join('') || '<small>Plus rien à vendre.</small>'}</div>
+    <h4>Vendre</h4>
+    ${c && !isPlayerSide(c) ? `<button data-sellcarried>Vendre ${esc(c.name)}, que tu portes (${slavePrice(c)} 💰)</button>` : '<p class="note">Assomme quelqu\'un, porte-le (G) jusqu\'ici et vends-le.</p>'}
+    <div class="items">${squad().map(u => `<div class="item"><span><b>${esc(u.name)}</b><small>membre de ton escouade</small></span>
+      <button data-sellmember="${u.id}">Vendre (${slavePrice(u)} 💰)</button></div>`).join('')}</div>`;
+}
+function slaveMarketClick(d, s) {
+  if (d.buyslave != null) {
+    const r = state.slaves.list[Number(d.buyslave)];
+    if (!r || state.money < r.price) return;
+    state.money -= r.price;
+    state.slaves.list.splice(Number(d.buyslave), 1);
+    const u = makeUnit({ faction: 'player', x: player.pos.x + rand(-2, 2), z: player.pos.z + rand(-2, 2), name: r.name,
+      maxHp: r.maxHp, hp: r.maxHp * 0.7, str: r.str, speed: 4.6, skills: r.skills, equip: { armor: 'haillons' }, sheathed: true,
+      look: { body: '#8a7a60', skin: pick(SKIN_COLORS), pants: '#3b2f22', height: rand(0.93, 1.05) } });
+    u.title = 'Ancien esclave';
+    logMsg(`Tu achètes ${u.name}. Il rejoint ton escouade.`);
+  } else if ('sellcarried' in d) {
+    const c = player.carrying;
+    if (!c) return;
+    state.money += slavePrice(c);
+    player.carrying = null;
+    removeUnit(c);
+    logMsg(`Tu vends ${c.name} comme esclave.`);
+  } else if (d.sellmember) {
+    const u = squad().find(x => x.id === Number(d.sellmember));
+    if (!u) return;
+    state.money += slavePrice(u);
+    removeUnit(u);
+    logMsg(`Tu vends ${u.name} au marchand d'esclaves.`, 'warn');
+    addChronicle(`${player.name} a vendu son compagnon ${u.name} comme esclave à ${s.name}.`, '⛓');
+  }
 }

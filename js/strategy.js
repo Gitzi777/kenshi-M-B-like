@@ -158,9 +158,34 @@ function promoteGenerals() {
     }
   }
 }
+// raid de bandits ou de cannibales contre une ville mal défendue
+function raiseRaid(fid) {
+  const f = F(fid);
+  const lairs = settlementsOf(fid);
+  if (!lairs.length) return null;
+  let best = null, bs = Infinity, from = null;
+  for (const t of state.settlements) {
+    if (t.faction === fid || t.type === 'repaire' || t.garrison > 7) continue;
+    for (const l of lairs) {
+      const d = d2(l, t);
+      if (d > 520) continue;
+      const score = t.garrison * 60 + d;
+      if (score < bs) { bs = score; best = t; from = l; }
+    }
+  }
+  if (!best) return null;
+  const g = gatePos(from, -6);
+  const p = makeParty(fid, 'army', g.x, g.z, ['chef', ...rollTroops(fid, randInt(8, 12), 'bandits')], { target: best.name, home: from.name });
+  p.dest = { x: best.x, z: best.z };
+  p.general = genPerson();
+  addChronicle(`${theF(f, true)} ${vb(f, 'lance', 'lancent')} un raid sur ${best.name}, mené par ${p.general} !`, '🐺');
+  return p;
+}
+
 function raiseArmy(fid) {
   const enemies = enemiesOf(fid);
-  const targets = state.settlements.filter(s => enemies.some(e => e.id === s.faction));
+  // les villes tombées aux mains des bandits sont aussi des cibles
+  const targets = state.settlements.filter(s => enemies.some(e => e.id === s.faction) || (F(s.faction).bandit && s.type !== 'repaire' && d2(s, nearestSettlement(s, x => x.faction === fid) || s) < 600));
   const own = settlementsOf(fid);
   if (!targets.length || !own.length) return null;
   let best = null, bd = Infinity, from = null;
@@ -374,7 +399,11 @@ function spawnTick() {
     const ps = partiesOf(f.id);
     if (own.length && ps.filter(p => p.kind === 'patrol').length < own.length + 1 && Math.random() < 0.5) spawnPatrol(f.id);
     if (own.length && ps.filter(p => p.kind === 'caravan').length < own.length + 1 && Math.random() < 0.5) planCaravan(f.id);
-    if (enemiesOf(f.id).length && !ps.some(p => p.kind === 'army') && Math.random() < 0.12) raiseArmy(f.id);
+    const banditTowns = state.settlements.some(s => F(s.faction).bandit && s.type !== 'repaire');
+    if ((enemiesOf(f.id).length || banditTowns) && !ps.some(p => p.kind === 'army') && Math.random() < 0.12) raiseArmy(f.id);
+  }
+  for (const f of aliveFactions().filter(f => f.bandit)) {
+    if (!partiesOf(f.id).some(p => p.kind === 'army') && Math.random() < 0.04) raiseRaid(f.id);
   }
   for (const f of aliveFactions().filter(f => f.bandit)) if (partiesOf(f.id).length < (f.id === 'bandits' ? 7 : 5)) spawnBandits(null, f.id);
 }
@@ -553,6 +582,7 @@ function populateWorld() {
   for (const f of majorFactions()) { spawnPatrol(f.id); spawnPatrol(f.id); spawnCaravan(f.id); }
   for (let i = 0; i < 5; i++) spawnBandits();
   for (let i = 0; i < 4; i++) spawnBandits(null, 'cannibales');
+  for (let i = 0; i < 3; i++) { spawnBandits(null, 'racket'); spawnBandits(null, 'esclavagistes'); }
   for (const f of majorFactions()) ensureHierarchy(f);
   for (let i = 0; i < 5; i++) recordHistory();
   for (const k in state.relations) {

@@ -47,8 +47,8 @@ function wallBetween(a, b) {
 }
 
 // ---------- Construction ----------
-const SERVICE_NAMES = { auberge: 'Auberge', marche: 'Marché', bazar: 'Bazar', forge: 'Forge', tailleur: 'Tailleur', atelier: 'Menuisier', palais: 'Palais', caserne: 'Caserne', prison: 'Prison' };
-const SERVICE_KEEPER = { auberge: 'Aubergiste', marche: 'Marchand', bazar: 'Brocanteur', forge: 'Forgeron', tailleur: 'Tailleur', atelier: 'Menuisier', palais: 'Intendant', caserne: 'Sergent', prison: 'Geôlier' };
+const SERVICE_NAMES = { esclaves: 'Marché aux esclaves', auberge: 'Auberge', marche: 'Marché', bazar: 'Bazar', forge: 'Forge', tailleur: 'Tailleur', atelier: 'Menuisier', palais: 'Palais', caserne: 'Caserne', prison: 'Prison' };
+const SERVICE_KEEPER = { esclaves: "Marchand d'esclaves", auberge: 'Aubergiste', marche: 'Marchand', bazar: 'Brocanteur', forge: 'Forgeron', tailleur: 'Tailleur', atelier: 'Menuisier', palais: 'Intendant', caserne: 'Sergent', prison: 'Geôlier' };
 
 function buildSettlement(s) {
   const g = new T.Group();
@@ -245,6 +245,7 @@ function buildSettlement(s) {
       s.homes.push({ door, bed });
     }
     addFlag(4, -4, 14);
+    if (fac.slavery) slaveMarket(s, g, ly, rng, s.gate + 0.9, 12);
   } else if (s.type === 'camp') {
     const n = Math.round(2 * Math.PI * s.r / 1.3);
     for (let i = 0; i < n; i++) {
@@ -272,6 +273,7 @@ function buildSettlement(s) {
       sign(tb, v.name, size * 0.6 + 2);
     });
     makeCage(s, g, ly, rng, 0, -9, 30);
+    if (fac.slavery) slaveMarket(s, g, ly, rng, s.gate + 0.9, 8);
     addFlag(4, -4, 9);
   } else {
     // repaire : huttes, totems, feu, cage à prisonniers
@@ -338,7 +340,18 @@ function makeCage(s, g, ly, rng, lx, lz, lock) {
   sg([-1.5, 1.5], [-0.75, 1.5]); sg([0.75, 1.5], [1.5, 1.5]);
   const door = sg([-0.75, 1.5], [0.75, 1.5]);
   const c = W(0, 0), f = W(0, 2.6);
-  s.cells.push({ x: c.x, z: c.z, fx: f.x, fz: f.z, door, doorMesh, open: false, lock, cage: true });
+  const cell = { x: c.x, z: c.z, fx: f.x, fz: f.z, door, doorMesh, open: false, lock, cage: true };
+  s.cells.push(cell);
+  return cell;
+}
+
+// marché aux esclaves : une cage et son marchand, près de la place
+function slaveMarket(s, g, ly, rng, a, r) {
+  const lx = Math.cos(a) * r, lz = Math.sin(a) * r;
+  const cell = makeCage(s, g, ly, rng, lx, lz, 45);
+  cell.market = true;
+  const kx = s.x + lx + Math.cos(a) * 0, kz = s.z + lz + 3.4;
+  s.services.push({ type: 'esclaves', name: `Marché aux esclaves ${deN(s.name)}`, keeper: genPerson(rng), x: kx, z: kz + 0.8, kx, kz, yaw: 0, radius: 2.4 });
 }
 
 function fillChest(ch) {

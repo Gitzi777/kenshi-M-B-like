@@ -237,10 +237,17 @@ function genFaction(rng, opts = {}) {
     };
   }
   if (opts.bandit) {
+    // trois sortes de bandits : pillards (hostiles), rançonneurs (exigent un péage), esclavagistes (capturent)
+    const K = {
+      pillard:  { id: 'bandits',       label: 'Brigands',      map: '#1d1d1d', colors: ['#1f1a17', '#a01e1e', '#e0d0b0'], emblem: 'skull',  body: '#5a3a2a', chief: 'Chef' },
+      racket:   { id: 'racket',        label: 'Rançonneurs',   map: '#8a6a1a', colors: ['#4a3a14', '#d8b84a', '#1a1408'], emblem: 'coin',   body: '#6e5a2a', chief: 'Percepteur' },
+      slaver:   { id: 'esclavagistes', label: 'Esclavagistes', map: '#3a2a4a', colors: ['#2a1a3a', '#9a8aa8', '#e8e0f0'], emblem: 'swords', body: '#4a3a5a', chief: 'Maître' },
+    }[opts.kind || 'pillard'];
     return {
-      id: 'bandits', name: `Brigands ${deN(place)}`, art: 'les', of: `des Brigands ${deN(place)}`, culture: 'brigand', bandit: true,
-      map: '#1d1d1d', colors: ['#1f1a17', '#a01e1e', '#e0d0b0'], flag: { pattern: 'plain', emblem: 'skull' },
-      leader: `Chef ${genName(rng)}`, outfit: { body: '#5a3a2a', pants: '#2d2419', tabard: false },
+      id: K.id, name: `${K.label} ${deN(place)}`, art: 'les', of: `des ${K.label} ${deN(place)}`, culture: 'brigand', bandit: true,
+      behavior: opts.kind || 'pillard', slavery: opts.kind === 'slaver',
+      map: K.map, colors: K.colors, flag: { pattern: 'plain', emblem: K.emblem },
+      leader: `${K.chief} ${genName(rng)}`, outfit: { body: K.body, pants: '#2d2419', tabard: false },
       troops: JSON.parse(JSON.stringify(CULTURES.brigand.troops)), shop: [], alive: true, founded: 0,
     };
   }
@@ -259,6 +266,7 @@ function genFaction(rng, opts = {}) {
     leader: `${rpick(rng, LEADER_TITLE)} ${genName(rng)}`,
     outfit: { body: main, pants: hsl(hue, 0.2, 0.15), tabard: C.tabard },
     troops: JSON.parse(JSON.stringify(C.troops)), shop: [...C.shop], alive: true, founded: 0,
+    slavery: rng() < ({ fanatique: 0.6, marchand: 0.5, nomade: 0.35, lourd: 0.3, guerrier: 0.3 }[culture] || 0.3),
   };
 }
 
@@ -404,12 +412,13 @@ function generateWorld(seed, keepFactions = null) {
   elevN = makeNoise(seed); moistN = makeNoise(seed + 101); detailN = makeNoise(seed + 7);
 
   // factions
-  const nf = 4 + Math.floor(rng() * 3);
+  const nf = 3 + Math.floor(rng() * 2);
   const hue0 = rng();
   const facs = [];
   for (let i = 0; i < nf; i++) facs.push(genFaction(rng, { hue: hue0 + i / nf + rng() * 0.05 }));
-  facs.push(genFaction(rng, { bandit: true }), genFaction(rng, { cannibal: true }));
-  for (const f of facs) { state.factions[f.id] = f; state.rep[f.id] = f.bandit ? -100 : 0; }
+  facs.push(genFaction(rng, { bandit: true, kind: 'pillard' }), genFaction(rng, { bandit: true, kind: 'racket' }),
+    genFaction(rng, { bandit: true, kind: 'slaver' }), genFaction(rng, { cannibal: true }));
+  for (const f of facs) { state.factions[f.id] = f; state.rep[f.id] = f.bandit && f.behavior !== 'racket' ? -100 : 0; }
   const majors = facs.filter(f => !f.bandit);
   for (const a of majors) for (const b of majors) if (a.id < b.id) state.relations[relKey(a.id, b.id)] = 'peace';
   for (let i = 0; i < 1 + Math.floor(rng() * 2); i++) {
@@ -433,7 +442,7 @@ function generateWorld(seed, keepFactions = null) {
     const camp = CULTURES[f.culture].camp;
     sites.push({ ...cap, faction: f.id, type: camp ? 'camp' : 'ville', capital: true, name: f.place || uniqueName(), pop: randInt(140, 220) });
     usedNames.add(f.place);
-    const extra = 1 + Math.floor(rng() * 2);
+    const extra = rng() < 0.6 ? 1 : 0;
     for (let k = 0; k < extra; k++) {
       for (let t = 0; t < 200; t++) {
         const a = rng() * Math.PI * 2, r = 130 + rng() * 140;
@@ -448,7 +457,8 @@ function generateWorld(seed, keepFactions = null) {
   // repaires des brigands (déserts, steppes) et des cannibales (forêts, montagnes)
   for (const f of facs.filter(f => f.bandit)) {
     const wanted = f.culture === 'cannibale' ? ['foret', 'montagne'] : ['desert', 'steppe', 'sel'];
-    for (let k = 0; k < 2; k++) {
+    const lairs = f.culture === 'cannibale' ? 2 : 1;
+    for (let k = 0; k < lairs; k++) {
       for (let t = 0; t < 400; t++) {
         const x = (rng() - 0.5) * WORLD, z = (rng() - 0.5) * WORLD;
         if (!wanted.includes(biomeAt(x, z)) && t < 300) continue;

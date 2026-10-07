@@ -28,7 +28,7 @@ function setCamMode(mode) {
     state.selected = [];
     fol.yaw = player.yaw; fol.init = false;
     player.cmd = null;
-    logMsg('🎥 Vue suivie : ZQSD bouger · ← → tourner la caméra · molette zoom · R dégainer · clic frapper vers le curseur.');
+    logMsg('🎥 Vue suivie : Z/S avancer · Q/D tourner · trackpad 2 doigts pour regarder et zoomer · R dégainer · clic pour frapper.');
   } else if (mode === 'rts') {
     if (document.pointerLockElement) document.exitPointerLock();
     rts.x = player.pos.x; rts.z = player.pos.z; rts.yaw = cam.yaw; rts.init = false;
@@ -444,6 +444,7 @@ function update(dt) {
   updatePicking(dt);
   updateCarry();
   updateJail(dt);
+  updateToll();
   updateUnits(dt);
   updateArrows(dt);
   updateWorld(dt);
