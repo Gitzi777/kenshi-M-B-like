@@ -11,7 +11,21 @@ function loadAssets(onProgress, onDone) {
   const loader = new THREE.GLTFLoader();
   const files = [...CHAR_FILES, 'weapons', 'nature', 'village'];
   let done = 0;
-  Promise.all(files.map(f => new Promise((res, rej) => loader.load('assets/' + f + (window.TA_ASSET_EXT || '.glb'), g => { onProgress(++done / files.length); res([f, g]); }, undefined, rej))))
+  // version en ligne : chaque modèle est un .json qui contient le .glb encodé en base64 (format accepté par l'hébergeur)
+  const packed = window.TA_ASSET_EXT === '.json';
+  const cib = window.createImageBitmap;
+  if (packed) window.createImageBitmap = undefined; // textures chargées par <img>, permis partout
+  const one = f => new Promise((res, rej) => {
+    const ok = g => { onProgress(++done / files.length); res([f, g]); };
+    if (!packed) { loader.load('assets/' + f + '.glb', ok, undefined, rej); return; }
+    fetch('assets/' + f + '.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(o => {
+      const bin = atob(o.glb), buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      loader.parse(buf.buffer, '', ok, rej);
+    }).catch(rej);
+  });
+  Promise.all(files.map(one))
+    .finally(() => { if (packed) window.createImageBitmap = cib; })
     .then(list => {
       for (const [f, g] of list) {
         if (CHAR_FILES.includes(f)) ASSETS.chars[f] = g.scene;
