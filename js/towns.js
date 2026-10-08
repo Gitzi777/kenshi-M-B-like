@@ -78,6 +78,18 @@ function buildSettlement(s) {
     const seg = (x1, z1, x2, z2) => { const a = W(x1, z1), e = W(x2, z2); return addSeg(a.x, a.z, e.x, e.z); };
     const hw = w / 2, hd = d / 2, door = 1.9;
     b.add(box(w, 0.12, d, '#7a6248', 0, 0.06, 0, 'wood'));
+    const kit = ASSETS.ready && ASSETS.village ? buildHouseModel(w, d, h, rng) : null;
+    if (kit) {
+      for (const m of kit.walls) b.add(solid(m));
+      seg(-hw, -hd, hw, -hd); seg(-hw, -hd, -hw, hd); seg(hw, -hd, hw, hd);
+      seg(-hw, hd, -door / 2, hd); seg(door / 2, hd, hw, hd);
+      const roof = new T.Group();
+      for (const m of kit.roof) roof.add(m);
+      b.add(roof);
+      const info = { W, c: W(0, 0), yaw, hw, hd, roof, b, shell: new Set([...b.children]) };
+      s.buildings.push(info);
+      return { b, W, seg, info };
+    }
     b.add(solid(box(w, h, 0.3, color, 0, h / 2, -hd, 'plaster')), solid(box(0.3, h, d, color, -hw, h / 2, 0, 'plaster')), solid(box(0.3, h, d, color, hw, h / 2, 0, 'plaster')));
     const side = (w - door) / 2;
     b.add(solid(box(side, h, 0.3, color, -hw + side / 2, h / 2, hd, 'plaster')), solid(box(side, h, 0.3, color, hw - side / 2, h / 2, hd, 'plaster')));
@@ -219,10 +231,22 @@ function buildSettlement(s) {
       const tower = mesh(new T.CylinderGeometry(1.8, 2.1, 8, 10), '#8a7052', true, 'stone');
       tower.position.set(tx, ly(tx, tz) + 4, tz);
       g.add(solid(tower));
-      const cap = mesh(new T.ConeGeometry(2.6, 3, 10), '#7a3a26', true, 'tiles');
-      cap.position.set(tx, ly(tx, tz) + 9.5, tz);
+      const cap = ASSETS.ready && ASSETS.village ? villageProp('Roof_Tower_RoundTiles', 0.85) : mesh(new T.ConeGeometry(2.6, 3, 10), '#7a3a26', true, 'tiles');
+      cap.position.set(tx, ly(tx, tz) + (ASSETS.ready && ASSETS.village ? 8.3 : 9.5), tz);
       g.add(cap, box(4.4, 0.5, 4.4, '#8a7052', tx, ly(tx, tz) + 8.1, tz, 'stone'));
       addFlag(tx, tz, 11);
+    }
+    // caisses et charrette près de la porte
+    if (ASSETS.ready && ASSETS.village) {
+      const ga = s.gate, gr = s.r - 7;
+      for (const [da, dr, name, sc] of [[0.12, 0, 'Prop_Wagon', 1], [-0.1, 1, 'Prop_Crate', 0.9], [-0.13, -0.5, 'Prop_Crate', 0.8], [0.2, 2, 'Prop_Crate', 1]]) {
+        const a = ga + da, r = gr + dr, px = Math.cos(a) * r, pz = Math.sin(a) * r;
+        const pr = villageProp(name, sc);
+        pr.position.set(px, ly(px, pz), pz);
+        pr.rotation.y = rng() * 6;
+        g.add(pr);
+        addObstacle(s.x + px, s.z + pz, name === 'Prop_Wagon' ? 1.6 : 0.6);
+      }
     }
     const types = ['auberge', 'bazar', 'forge', 'tailleur', 'atelier', 'prison', s.capital ? 'palais' : 'caserne'];
     const angles = [];
@@ -326,11 +350,34 @@ function buildSettlement(s) {
   const label = textSprite(s.name);
   label.position.y = s.type === 'ville' ? 22 : 14;
   g.add(label);
+  mergeTownStatics(s, g);
   worldGroup.add(g);
   s.root = g;
 }
 
 // cage à prisonniers en plein air (camps et repaires)
+// regroupe les éléments fixes posés directement dans la ville (remparts, créneaux, tours, tentes)
+// en quelques gros maillages : beaucoup moins d'appels de dessin
+function mergeTownStatics(s, g) {
+  if (typeof mergeByMaterial !== 'function') return;
+  g.updateMatrixWorld(true);
+  const inv = new T.Matrix4().copy(g.matrixWorld).invert();
+  const items = [], removed = [];
+  for (const ch of g.children) {
+    if (!ch.isMesh || !ch.material || ch.material.isMeshBasicMaterial || ch.material.transparent) continue;
+    ch.traverse(o => {
+      if (!o.isMesh || o.material.isMeshBasicMaterial) return;
+      items.push({ geo: o.geometry, mat: o.material, matrix: new T.Matrix4().multiplyMatrices(inv, o.matrixWorld) });
+    });
+    removed.push(ch);
+  }
+  if (removed.length < 4) return;
+  const blockers = new Set(s.blockers);
+  for (const ch of removed) { g.remove(ch); blockers.delete(ch); }
+  const merged = mergeByMaterial(items);
+  for (const m of merged) { g.add(m); blockers.add(m); }
+  s.blockers = [...blockers];
+}
 function makeCage(s, g, ly, rng, lx, lz, lock) {
   const W = (x, z) => ({ x: s.x + lx + x, z: s.z + lz + z });
   const cg = new T.Group();
@@ -385,8 +432,18 @@ function insideBuilding(info, p) {
 function updateRoofs() {
   if (!player) return;
   for (const s of state.settlements) {
-    if (!s.buildings || d2(s, player.pos) > s.r + 30) continue;
-    for (const bl of s.buildings) bl.roof.visible = !team().some(u => !u.dead && d2(u.pos, bl.c) < 9 && insideBuilding(bl, u.pos));
+    if (!s.buildings) continue;
+    const farTown = d2(s, player.pos) > s.r + 30;
+    if (farTown && s.interiorsHidden) continue;
+    s.interiorsHidden = farTown;
+    for (const bl of s.buildings) {
+      bl.roof.visible = farTown || !team().some(u => !u.dead && d2(u.pos, bl.c) < 9 && insideBuilding(bl, u.pos));
+      // l'intérieur (meubles, comptoirs) n'est dessiné que de près
+      if (bl.shell) {
+        const near = d2(player.pos, bl.c) < 26;
+        if (near !== bl.inside) { bl.inside = near; for (const ch of bl.b.children) if (!bl.shell.has(ch)) ch.visible = near; }
+      }
+    }
   }
 }
 const serviceAt = (p, s) => {

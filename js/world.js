@@ -61,6 +61,8 @@ function mat(color, tex = 'grain') {
 }
 function mesh(geo, color, shadow = true, tex) {
   const m = new T.Mesh(geo, mat(color, tex));
+  // les petits objets ne projettent pas d'ombre (beaucoup moins de travail pour la carte graphique)
+  if (shadow) { geo.computeBoundingSphere(); if (geo.boundingSphere.radius < 0.9) shadow = false; }
   m.castShadow = shadow; m.receiveShadow = true;
   return m;
 }
@@ -520,7 +522,7 @@ function generateWorld(seed, keepFactions = null) {
 
 let terrainMesh = null;
 let TERRAIN_SPOTS = { sites: [], nodes: [] };
-const TERRAIN_SEG = 360;
+const TERRAIN_SEG = 300;
 function buildTerrain() {
   const geo = new T.PlaneGeometry(GRID_SIZE, GRID_SIZE, TERRAIN_SEG, TERRAIN_SEG);
   geo.rotateX(-Math.PI / 2);
@@ -585,7 +587,7 @@ function rebuildTerrainHeights() {
 }
 
 // ---------- Décor : arbres, rochers, buissons, cactus ----------
-let FAR_DECOR = [];
+let FAR_DECOR = [], DECOR_CHUNKS = [];
 const _zero = new T.Matrix4().makeScale(0, 0, 0);
 function hideFarDecorNear(focus, R) {
   const touched = new Set();
@@ -662,7 +664,7 @@ function decorModels() {
   return DECOR;
 }
 function buildDecor(rng, sites, nodeSpots) {
-  FAR_DECOR = []; NEAR.list = []; NEAR.cx = 1e9;
+  FAR_DECOR = []; DECOR_CHUNKS = []; NEAR.list = []; NEAR.cx = 1e9;
   const M = decorModels();
   const dummy = new T.Object3D();
   const col = new T.Color();
@@ -679,23 +681,37 @@ function buildDecor(rng, sites, nodeSpots) {
   const foliage = toonMat({ vertexColors: true, flatShading: true, roughness: 0.85 });
   const windy = (amp, minY) => addWind(toonMat({ vertexColors: true, flatShading: true, roughness: 0.85 }), amp, minY);
   // kind / near : quand les modèles détaillés sont chargés, ils remplacent cette version simple près du joueur
+  // le décor est découpé en zones de 160 m : seules les zones visibles sont dessinées
+  const CH = 160;
   const instanced = (geo, material, list, shadow = true, kind = null, near = null) => {
-    const m = new T.InstancedMesh(geo, material, Math.max(1, list.length));
-    m.castShadow = shadow; m.receiveShadow = true;
-    list.forEach((d, i) => {
-      dummy.position.set(d.x, d.y, d.z); dummy.rotation.set(d.rx || 0, d.ry || 0, d.rz || 0);
-      dummy.scale.set(d.sx, d.sy, d.sz); dummy.updateMatrix(); m.setMatrixAt(i, dummy.matrix);
-      if (kind && ASSETS.ready && (!d.skipNear)) {
-        FAR_DECOR.push({ m, i, x: d.x, z: d.z, mat: dummy.matrix.clone(), hidden: false });
-        addNearSpot(typeof kind === 'function' ? kind(d) : kind, { x: d.x, y: d.y + (near.dy || 0), z: d.z, ry: d.ry || 0, s: near.s(d), seed: rng() });
-      }
-      col.setRGB(1, 1, 1).multiplyScalar(d.tint || 1);
-      if (d.hue) col.lerp(d.hue, 0.25);
-      m.setColorAt(i, col);
-    });
-    m.count = list.length;
-    worldGroup.add(m);
-    return m;
+    const chunks = new Map();
+    for (const d of list) {
+      const k = Math.floor(d.x / CH) + ',' + Math.floor(d.z / CH);
+      if (!chunks.has(k)) chunks.set(k, []);
+      chunks.get(k).push(d);
+    }
+    geo.computeBoundingSphere();
+    for (const [k, items] of chunks) {
+      const [cx, cz] = k.split(',').map(v => (Number(v) + 0.5) * CH);
+      const g2 = geo.clone();
+      g2.boundingSphere = new T.Sphere(new T.Vector3(0, 0, 0), CH * 0.75 + 30);
+      const m = new T.InstancedMesh(g2, material, items.length);
+      m.position.set(cx, 0, cz);
+      m.castShadow = shadow && !ASSETS.ready; m.receiveShadow = true;
+      items.forEach((d, i) => {
+        dummy.position.set(d.x - cx, d.y, d.z - cz); dummy.rotation.set(d.rx || 0, d.ry || 0, d.rz || 0);
+        dummy.scale.set(d.sx, d.sy, d.sz); dummy.updateMatrix(); m.setMatrixAt(i, dummy.matrix);
+        if (kind && ASSETS.ready && (!d.skipNear)) {
+          FAR_DECOR.push({ m, i, x: d.x, z: d.z, mat: dummy.matrix.clone(), hidden: false });
+          addNearSpot(typeof kind === 'function' ? kind(d) : kind, { x: d.x, y: d.y + (near.dy || 0), z: d.z, ry: d.ry || 0, s: near.s(d), seed: rng() });
+        }
+        col.setRGB(1, 1, 1).multiplyScalar(d.tint || 1);
+        if (d.hue) col.lerp(d.hue, 0.25);
+        m.setColorAt(i, col);
+      });
+      worldGroup.add(m);
+      DECOR_CHUNKS.push(m);
+    }
   };
   const autumn = [lin('#c9a040'), lin('#b8622e'), lin('#9aaa40')];
   // forêts : pins et feuillus, en bosquets

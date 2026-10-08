@@ -9,7 +9,7 @@ const MODEL_SCALE = 0.78;
 function loadAssets(onProgress, onDone) {
   if (!THREE.GLTFLoader || location.protocol === 'file:') { onDone(false); return; }
   const loader = new THREE.GLTFLoader();
-  const files = [...CHAR_FILES, 'weapons', 'nature'];
+  const files = [...CHAR_FILES, 'weapons', 'nature', 'village'];
   let done = 0;
   Promise.all(files.map(f => new Promise((res, rej) => loader.load('assets/' + f + '.glb', g => { onProgress(++done / files.length); res([f, g]); }, undefined, rej))))
     .then(list => {
@@ -18,13 +18,74 @@ function loadAssets(onProgress, onDone) {
         if (f === 'knight') for (const c of g.animations) ASSETS.clips[c.name] = c;
         if (f === 'weapons') for (const n of g.scene.children) ASSETS.weapons[n.name] = n;
         if (f === 'nature') for (const n of g.scene.children) ASSETS.nature[n.name] = n;
+        if (f === 'village') { ASSETS.village = {}; for (const n of g.scene.children) ASSETS.village[n.name] = n; }
       }
-      for (const f of CHAR_FILES) ASSETS.chars[f].traverse(o => { if (o.isMesh) { o.material = toonFrom(o.material); o.castShadow = true; } });
+      for (const f of CHAR_FILES) { mergeSkinnedParts(ASSETS.chars[f]); addTintMasks(ASSETS.chars[f]); ASSETS.chars[f].traverse(o => { if (o.isMesh) { o.material = toonFrom(o.material); o.castShadow = true; } }); }
       for (const k in ASSETS.weapons) ASSETS.weapons[k].traverse(o => { if (o.isMesh) { o.material = toonFrom(o.material); o.castShadow = true; } });
       ASSETS.ready = true;
       onDone(true);
     })
     .catch(err => { console.warn('Modèles 3D indisponibles :', err); onDone(false); });
+}
+
+// fusionne bras, jambes, tête et corps en un seul maillage animé (moins d'appels de dessin)
+// quelle part de chaque morceau prend la couleur de la tenue (habits oui, visage non)
+const tintMaskOf = name => 1; // la peau et les métaux sont exclus dans le shader (couleur)
+function addTintMasks(root) {
+  root.traverse(o => {
+    if (!o.isMesh || o.geometry.attributes.tintMask) return;
+    const m = /Hat|Cape|Helmet/.test(o.name) ? 1 : PART(o.name) === 'body' ? tintMaskOf(o.name) : 0;
+    o.geometry.setAttribute('tintMask', new T.Float32BufferAttribute(new Float32Array(o.geometry.attributes.position.count).fill(m), 1));
+  });
+}
+// teinte par unité : uniform propre au matériau cloné
+function addTint(mat, color) {
+  const prev = mat.onBeforeCompile;
+  const prevKey = mat.customProgramCacheKey ? mat.customProgramCacheKey() : '';
+  mat.userData.tint = { value: color.clone() };
+  mat.onBeforeCompile = (sh, r) => {
+    if (prev) prev(sh, r);
+    sh.uniforms.uTint = mat.userData.tint;
+    sh.vertexShader = 'attribute float tintMask;\nvarying float vTintMask;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vTintMask = tintMask;');
+    sh.fragmentShader = 'uniform vec3 uTint;\nvarying float vTintMask;\n' + sh.fragmentShader.replace('#include <map_fragment>',
+      '#include <map_fragment>\n { vec3 c = diffuseColor.rgb; float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)); float sat = (mx - mn) / max(mx, 0.001);' +
+      ' float skin = step(c.b * 1.25, c.g) * step(c.g * 1.12, c.r) * step(0.08, mx); float k = vTintMask * smoothstep(0.18, 0.4, sat) * (1.0 - skin) * 0.75;' +
+      ' float lum = dot(c, vec3(0.3, 0.55, 0.15)); diffuseColor.rgb = mix(c, uTint * (0.25 + lum * 2.2), k); }');
+  };
+  mat.customProgramCacheKey = () => prevKey + '|tint';
+  return mat;
+}
+function mergeSkinnedParts(root) {
+  const parts = [];
+  root.traverse(o => { if (o.isSkinnedMesh && PART(o.name) === 'body') parts.push(o); });
+  if (parts.length < 2) return;
+  const first = parts[0];
+  const sameBones = p => p.skeleton.bones.length === first.skeleton.bones.length && p.skeleton.bones.every((b, i) => b === first.skeleton.bones[i]);
+  if (!parts.every(p => sameBones(p) && p.material === first.material && p.bindMatrix.equals(first.bindMatrix))) { console.warn('fusion impossible', root.name); return; }
+  const names = Object.keys(first.geometry.attributes);
+  if (!parts.every(p => names.every(n => p.geometry.attributes[n]) && p.geometry.index)) return;
+  const attrs = {}, idx = [], mask = [];
+  let offset = 0;
+  for (const n of names) attrs[n] = [];
+  for (const p of parts) {
+    const g = p.geometry;
+    const mk = tintMaskOf(p.name);
+    for (let i = 0; i < g.attributes.position.count; i++) mask.push(mk);
+    for (const n of names) { const a = g.attributes[n]; const get = [a.getX, a.getY, a.getZ, a.getW]; for (let i = 0; i < a.count; i++) for (let k = 0; k < a.itemSize; k++) attrs[n].push(get[k].call(a, i)); }
+    for (let i = 0; i < g.index.count; i++) idx.push(g.index.getX(i) + offset);
+    offset += g.attributes.position.count;
+  }
+  const geo = new T.BufferGeometry();
+  for (const n of names) {
+    const a = first.geometry.attributes[n];
+    const Arr = a.array.constructor;
+    geo.setAttribute(n, new T.BufferAttribute(new Arr(attrs[n]), a.itemSize, a.normalized));
+  }
+  geo.setIndex(idx);
+  geo.setAttribute('tintMask', new T.Float32BufferAttribute(mask, 1));
+  first.geometry = geo;
+  first.name = first.name.replace(/_(ArmLeft|ArmRight|LegLeft|LegRight|Head|Head_Hooded)$/, '') + '_Body';
+  for (const p of parts.slice(1)) p.parent.remove(p);
 }
 
 // ---------- Personnages animés ----------
@@ -43,6 +104,7 @@ function makeSkinnedCharacter(look) {
   body.add(model);
   const tint = look.tint ? lin(look.tint) : null;
   const mats = [];
+  const unitMats = {};
   const parts = { hat: [], cape: [], prop: [], body: [] };
   let bones = {};
   model.traverse(o => {
@@ -52,10 +114,14 @@ function makeSkinnedCharacter(look) {
     parts[p].push(o);
     if (p === 'prop') { o.visible = false; return; }
     // matériau propre à chaque unité : flash quand on est touché, teinte de faction sur les habits
-    const mc = o.material.clone(); mc.userData.rim = false;
-    o.material = addRim(mc);
-    if (tint && (/Body|Cape|Hat|Hooded/.test(o.name))) o.material.color.lerp(tint, /Cape|Hat|Hooded/.test(o.name) ? 0.65 : 0.45);
-    mats.push(o.material);
+    // un seul matériau par unité, partagé par ses morceaux
+    const kind = o.isSkinnedMesh ? 'skin' : 'rigid';
+    if (!unitMats[kind]) {
+      const um = o.material.clone(); um.userData = {}; um.skinning = o.isSkinnedMesh;
+      addRim(um); if (tint) addTint(um, tint);
+      unitMats[kind] = um; mats.push(um);
+    }
+    o.material = unitMats[kind];
     o.castShadow = true;
     o.frustumCulled = false;
   });
@@ -254,7 +320,7 @@ const NATURE_SETS = {
   buisson: ['Bush_Common', 'Bush_Common_Flowers'],
   plante: ['Fern_1', 'Plant_1_Big', 'Plant_7_Big', 'Flower_3_Group', 'Flower_4_Group', 'Grass_Wispy_Tall', 'Mushroom_Common', 'Clover_1'],
 };
-const NEAR = { R: 95, list: [], meshes: {}, cx: 1e9, cz: 1e9 };
+const NEAR = { R: 75, MAX: 140, list: [], meshes: {}, cx: 1e9, cz: 1e9 };
 function natureParts(name) {
   const root = ASSETS.nature[name];
   if (!root) return [];
@@ -276,7 +342,7 @@ function buildNearNature() {
   for (const name of Object.values(NATURE_SETS).flat()) {
     const parts = natureParts(name);
     NEAR.meshes[name] = parts.map(p => {
-      const im = new T.InstancedMesh(p.geo, p.mat, 260);
+      const im = new T.InstancedMesh(p.geo, p.mat, NEAR.MAX);
       im.castShadow = !/Grass|Clover|Flower|Fern|Plant|Mushroom/.test(name);
       im.receiveShadow = true;
       im.count = 0;
@@ -299,7 +365,7 @@ function updateNearNature(focus, force) {
     s.near = Math.abs(s.x - focus.x) < NEAR.R && Math.abs(s.z - focus.z) < NEAR.R && Math.hypot(s.x - focus.x, s.z - focus.z) < NEAR.R;
     if (!s.near) continue;
     const parts = NEAR.meshes[s.model];
-    if (!parts || counts[s.model] >= 260) { s.near = false; continue; }
+    if (!parts || counts[s.model] >= NEAR.MAX) { s.near = false; continue; }
     _nm.compose(_np.set(s.x, s.y, s.z), _nq.setFromEuler(_ne.set(0, s.ry || 0, 0)), _ns.set(s.s, s.s * (s.sy || 1), s.s));
     for (const p of parts) p.im.setMatrixAt(counts[s.model], new T.Matrix4().multiplyMatrices(_nm, p.local));
     counts[s.model]++;
@@ -307,4 +373,101 @@ function updateNearNature(focus, force) {
   for (const k in NEAR.meshes) for (const p of NEAR.meshes[k]) { p.im.count = counts[k]; p.im.instanceMatrix.needsUpdate = true; }
   // les versions simplifiées lointaines sont cachées là où les modèles détaillés sont affichés
   if (typeof hideFarDecorNear === 'function') hideFarDecorNear(focus, NEAR.R);
+}
+
+// ---------- Maisons médiévales (kit modulaire Quaternius) ----------
+// fusionne des pièces par matériau : une maison = quelques maillages seulement
+function mergeByMaterial(items) {
+  const groups = new Map();
+  for (const it of items) {
+    if (!groups.has(it.mat)) groups.set(it.mat, []);
+    groups.get(it.mat).push(it);
+  }
+  const out = [];
+  for (const [m, list] of groups) {
+    const pos = [], nor = [], uv = [];
+    for (const it of list) {
+      const g = (it.geo.index ? it.geo.toNonIndexed() : it.geo.clone()).applyMatrix4(it.matrix);
+      const P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv;
+      for (let i = 0; i < P.count; i++) {
+        pos.push(P.getX(i), P.getY(i), P.getZ(i));
+        if (N) nor.push(N.getX(i), N.getY(i), N.getZ(i));
+        uv.push(U ? U.getX(i) : 0, U ? U.getY(i) : 0);
+      }
+    }
+    const geo = new T.BufferGeometry();
+    geo.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
+    if (nor.length === pos.length) geo.setAttribute('normal', new T.Float32BufferAttribute(nor, 3)); else geo.computeVertexNormals();
+    geo.setAttribute('uv', new T.Float32BufferAttribute(uv, 2));
+    const mesh = new T.Mesh(geo, m);
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    out.push(mesh);
+  }
+  return out;
+}
+const VMAT = new Map();
+function villageParts(name) {
+  const root = ASSETS.village && ASSETS.village[name];
+  if (!root) return [];
+  root.updateMatrixWorld(true);
+  const inv = new T.Matrix4().copy(root.matrixWorld).invert();
+  const out = [];
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    if (!VMAT.has(o.material)) {
+      const t = toonFrom(o.material);
+      if (/Vine|Glass/.test(o.material.name)) { t.side = T.DoubleSide; t.alphaTest = 0.4; }
+      VMAT.set(o.material, t);
+    }
+    out.push({ geo: o.geometry, mat: VMAT.get(o.material), local: new T.Matrix4().multiplyMatrices(inv, o.matrixWorld) });
+  });
+  return out;
+}
+// place une pièce : position, rotation (y) et échelle dans le repère de la maison
+function placePart(items, name, x, y, z, ry = 0, sx = 1, sy = 1, sz = 1) {
+  const m = new T.Matrix4().compose(new T.Vector3(x, y, z), new T.Quaternion().setFromEuler(new T.Euler(0, ry, 0)), new T.Vector3(sx, sy, sz));
+  for (const p of villageParts(name)) items.push({ geo: p.geo, mat: p.mat, matrix: new T.Matrix4().multiplyMatrices(m, p.local) });
+}
+const ROOFS = [[4, 4], [6, 6], [6, 8], [8, 8], [8, 12]];
+// construit murs et toit d'une maison de w × d mètres, h de haut, porte au milieu de la façade (+z)
+function buildHouseModel(w, d, h, rng, style) {
+  const wallKind = style || (rng() < 0.6 ? 'Plaster' : rng() < 0.6 ? 'UnevenBrick' : 'Plaster');
+  const n = Math.max(3, Math.round(w / 2) | 1), m = Math.max(2, Math.round(d / 2));
+  const sx = w / (n * 2), sz = d / (m * 2), sy = h / 3.12;
+  const hw = w / 2, hd = d / 2;
+  const walls = [], roof = [];
+  const straight = () => wallKind === 'Plaster' && rng() < 0.3 ? 'Wall_Plaster_WoodGrid' : `Wall_${wallKind}_Straight`;
+  const windowW = `Wall_${wallKind}_Window_Wide_Round`;
+  // façade avec la porte au centre
+  for (let i = 0; i < n; i++) {
+    const x = -hw + (i + 0.5) * 2 * sx;
+    const name = i === (n - 1) / 2 ? `Wall_${wallKind}_Door_Round` : (i % 2 ? windowW : straight());
+    placePart(walls, name, x, 0, hd + 0.11, 0, sx, sy, 1);
+  }
+  for (let i = 0; i < n; i++) placePart(walls, i % 2 && rng() < 0.6 ? windowW : straight(), -hw + (i + 0.5) * 2 * sx, 0, -hd - 0.11, Math.PI, sx, sy, 1);
+  for (let i = 0; i < m; i++) {
+    const z = -hd + (i + 0.5) * 2 * sz;
+    placePart(walls, i % 2 ? windowW : straight(), -hw - 0.11, 0, z, -Math.PI / 2, sz, sy, 1);
+    placePart(walls, i % 2 === 0 && m > 2 ? windowW : straight(), hw + 0.11, 0, z, Math.PI / 2, sz, sy, 1);
+  }
+  for (const [cx, cz] of [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]]) placePart(walls, 'Corner_Exterior_Wood', cx, 0, cz, 0, 1.4, sy, 1.4);
+  // toit de tuiles et pignons
+  let best = ROOFS[0], bs = 1e9;
+  for (const r of ROOFS) { const sc = Math.abs(r[0] - w) + Math.abs(r[1] - d); if (sc < bs) { bs = sc; best = r; } }
+  const rx = w / best[0], rz = d / best[1];
+  placePart(roof, `Roof_RoundTiles_${best[0]}x${best[1]}`, 0, h, 0, 0, rx, Math.min(1.2, (rx + rz) / 2), rz);
+  placePart(roof, `Roof_Front_Brick${best[0]}`, 0, h, hd - 0.05, 0, rx, Math.min(1.2, (rx + rz) / 2), 1);
+  placePart(roof, `Roof_Front_Brick${best[0]}`, 0, h, -hd + 0.05, Math.PI, rx, Math.min(1.2, (rx + rz) / 2), 1);
+  if (rng() < 0.5) placePart(roof, 'Prop_Chimney', hw * 0.5, h + 0.5, -hd * 0.3, 0, 0.8, 0.8, 0.8);
+  // un peu de lierre sur certaines façades
+  if (rng() < 0.35) placePart(walls, 'Prop_Vine1', -hw + 1.2, h * 0.75, hd + 0.2, 0, 1, sy, 1);
+  return { walls: mergeByMaterial(walls), roof: mergeByMaterial(roof) };
+}
+// objets de décor posés en ville (caisses, charrettes, barrières)
+function villageProp(name, s = 1) {
+  const items = [];
+  placePart(items, name, 0, 0, 0, 0, s, s, s);
+  const g = new T.Group();
+  for (const m of mergeByMaterial(items)) g.add(m);
+  return g;
 }

@@ -679,6 +679,11 @@ function updateSky() {
   }
   updateGrass(state.mode === 'play' ? p : null);
   updateNearNature(p);
+  // les villes lointaines (cachées par la brume) ne sont pas dessinées
+  const viewR = isRTS() ? 420 + rts.sdist * 2 : 360;
+  for (const s of state.settlements) if (s.root) s.root.visible = Math.hypot(s.x - p.x, s.z - p.z) < viewR + s.r;
+  for (const n of state.nodes) if (n.root) n.root.visible = Math.hypot(n.x - p.x, n.z - p.z) < viewR;
+  for (const m of DECOR_CHUNKS) m.visible = Math.hypot(m.position.x - p.x, m.position.z - p.z) < viewR + 140;
 }
 
 function waveFlags(t) {
