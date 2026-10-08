@@ -127,7 +127,10 @@ function boxGeoUV(w, h, d, k = 0.35) {
 
 // ---------- Vent : la végétation ondule ----------
 function addWind(material, amp = 0.12, minY = 0) {
-  material.onBeforeCompile = sh => {
+  const prev = material.onBeforeCompile;
+  const prevKey = material.customProgramCacheKey ? material.customProgramCacheKey() : '';
+  material.onBeforeCompile = (sh, r) => {
+    if (prev) prev(sh, r);
     sh.uniforms.uTime = gfxTime;
     sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
       {
@@ -142,7 +145,7 @@ function addWind(material, amp = 0.12, minY = 0) {
         transformed.z += w * ${(amp * 0.5).toFixed(3)} * hh * hh;
       }`);
   };
-  material.customProgramCacheKey = () => 'wind' + amp + minY;
+  material.customProgramCacheKey = () => prevKey + '|wind' + amp + minY;
   return material;
 }
 
@@ -331,7 +334,7 @@ const grass = {};
   const parts = [];
   for (let i = 0; i < 7; i++) parts.push({ geo: blade(i * 0.9 + 0.3, 0.38 + (i % 3) * 0.12, (i % 2 ? 0.1 : -0.08)).translate(Math.cos(i * 2.1) * 0.15, 0, Math.sin(i * 2.1) * 0.15), color: '#ffffff', shade: [0.72, 1.12] });
   const geo = mergeParts(parts);
-  const m = addWind(new T.MeshStandardMaterial({ vertexColors: true, side: T.DoubleSide, roughness: 1 }), 0.32, 0);
+  const m = addWind(toonMat({ vertexColors: true, side: T.DoubleSide, roughness: 1 }), 0.32, 0);
   grass.mesh = new T.InstancedMesh(geo, m, 9000);
   grass.mesh.receiveShadow = true;
   grass.mesh.frustumCulled = false;
@@ -341,7 +344,7 @@ const grass = {};
   // fleurs
   const fparts = [{ geo: new T.CylinderGeometry(0.012, 0.012, 0.35, 3).translate(0, 0.17, 0), color: '#5a7a3a' },
     { geo: new T.IcosahedronGeometry(0.06, 0).translate(0, 0.37, 0), color: '#ffffff' }];
-  grass.flowers = new T.InstancedMesh(mergeParts(fparts), addWind(new T.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 }), 0.4, 0), 900);
+  grass.flowers = new T.InstancedMesh(mergeParts(fparts), addWind(toonMat({ vertexColors: true, roughness: 0.8 }), 0.4, 0), 900);
   grass.flowers.frustumCulled = false;
   for (let i = 0; i < 900; i++) grass.flowers.setColorAt(i, new T.Color(1, 1, 1));
   grass.flowers.count = 0;
@@ -527,7 +530,7 @@ function buildRoads() {
     speckle(g, 500, s, 'rgba(255,240,210,0.25)', 'rgba(60,40,20,0.25)', 0.5, 2);
     g.fillStyle = 'rgba(80,60,40,0.18)'; g.fillRect(s * 0.3, 0, s * 0.08, s); g.fillRect(s * 0.62, 0, s * 0.08, s);
   });
-  const m = new T.Mesh(geo, new T.MeshStandardMaterial({ map: tex, transparent: true, roughness: 1, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, depthWrite: false }));
+  const m = new T.Mesh(geo, toonMat({ map: tex, transparent: true, roughness: 1, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, depthWrite: false }));
   m.receiveShadow = true;
   m.renderOrder = 1;
   worldGroup.add(m);

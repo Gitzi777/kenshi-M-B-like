@@ -54,7 +54,7 @@ const matCache = {};
 function mat(color, tex = 'grain') {
   const key = color + '|' + tex;
   if (!matCache[key]) {
-    matCache[key] = new T.MeshStandardMaterial({ color: new T.Color(color).convertSRGBToLinear(), flatShading: true, roughness: 0.9,
+    matCache[key] = toonMat({ color: new T.Color(color).convertSRGBToLinear(), flatShading: true, roughness: 0.9,
       map: typeof TEX !== 'undefined' ? TEX[tex] : null });
   }
   return matCache[key];
@@ -527,7 +527,7 @@ function buildTerrain() {
   geo.setAttribute('color', new T.Float32BufferAttribute(new Float32Array(geo.attributes.position.count * 3), 3));
   const uv = geo.attributes.uv;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * GRID_SIZE / 7, uv.getY(i) * GRID_SIZE / 7);
-  terrainMesh = new T.Mesh(geo, new T.MeshStandardMaterial({ vertexColors: true, roughness: 1, map: TEX.ground }));
+  terrainMesh = new T.Mesh(geo, toonMat({ vertexColors: true, roughness: 1, map: TEX.ground }));
   terrainMesh.receiveShadow = true;
   worldGroup.add(terrainMesh);
   rebuildTerrainHeights();
@@ -585,6 +585,19 @@ function rebuildTerrainHeights() {
 }
 
 // ---------- Décor : arbres, rochers, buissons, cactus ----------
+let FAR_DECOR = [];
+const _zero = new T.Matrix4().makeScale(0, 0, 0);
+function hideFarDecorNear(focus, R) {
+  const touched = new Set();
+  for (const f of FAR_DECOR) {
+    const hide = Math.abs(f.x - focus.x) < R && Math.abs(f.z - focus.z) < R && Math.hypot(f.x - focus.x, f.z - focus.z) < R;
+    if (hide === f.hidden) continue;
+    f.hidden = hide;
+    f.m.setMatrixAt(f.i, hide ? _zero : f.mat);
+    touched.add(f.m);
+  }
+  for (const m of touched) m.instanceMatrix.needsUpdate = true;
+}
 const DECOR = {};
 function decorModels() {
   if (DECOR.pine) return DECOR;
@@ -649,6 +662,7 @@ function decorModels() {
   return DECOR;
 }
 function buildDecor(rng, sites, nodeSpots) {
+  FAR_DECOR = []; NEAR.list = []; NEAR.cx = 1e9;
   const M = decorModels();
   const dummy = new T.Object3D();
   const col = new T.Color();
@@ -662,14 +676,19 @@ function buildDecor(rng, sites, nodeSpots) {
     }
     return out;
   };
-  const foliage = new T.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85 });
-  const windy = (amp, minY) => addWind(new T.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85 }), amp, minY);
-  const instanced = (geo, material, list, shadow = true) => {
+  const foliage = toonMat({ vertexColors: true, flatShading: true, roughness: 0.85 });
+  const windy = (amp, minY) => addWind(toonMat({ vertexColors: true, flatShading: true, roughness: 0.85 }), amp, minY);
+  // kind / near : quand les modèles détaillés sont chargés, ils remplacent cette version simple près du joueur
+  const instanced = (geo, material, list, shadow = true, kind = null, near = null) => {
     const m = new T.InstancedMesh(geo, material, Math.max(1, list.length));
     m.castShadow = shadow; m.receiveShadow = true;
     list.forEach((d, i) => {
       dummy.position.set(d.x, d.y, d.z); dummy.rotation.set(d.rx || 0, d.ry || 0, d.rz || 0);
       dummy.scale.set(d.sx, d.sy, d.sz); dummy.updateMatrix(); m.setMatrixAt(i, dummy.matrix);
+      if (kind && ASSETS.ready && (!d.skipNear)) {
+        FAR_DECOR.push({ m, i, x: d.x, z: d.z, mat: dummy.matrix.clone(), hidden: false });
+        addNearSpot(typeof kind === 'function' ? kind(d) : kind, { x: d.x, y: d.y + (near.dy || 0), z: d.z, ry: d.ry || 0, s: near.s(d), seed: rng() });
+      }
       col.setRGB(1, 1, 1).multiplyScalar(d.tint || 1);
       if (d.hue) col.lerp(d.hue, 0.25);
       m.setColorAt(i, col);
@@ -697,13 +716,13 @@ function buildDecor(rng, sites, nodeSpots) {
     return d;
   });
   const pineMat = windy(0.05, 0.25); pineMat.side = T.DoubleSide;
-  instanced(M.pine, pineMat, pines);
-  instanced(M.oak, windy(0.07, 0.4), oaks);
+  instanced(M.pine, pineMat, pines, true, 'pin', { s: d => d.sy / 7.3, dy: 0.1 });
+  instanced(M.oak, windy(0.07, 0.4), oaks, true, d => d.sy > 7.8 && rng() < 0.25 ? 'tordu' : 'feuillu', { s: d => d.sy > 7.8 ? d.sy / 9 : d.sy / 6.2, dy: 0.1 });
   // arbres morts, cactus
   instanced(M.dead, foliage, scatter(140, b => b === 'desert' || b === 'sel', (x, z) => {
     const h = 3 + rng() * 3;
     return { x, y: heightAt(x, z) - 0.1, z, ry: rng() * 6, sx: h, sy: h, sz: h, tint: 0.9 + rng() * 0.2 };
-  }));
+  }), true, 'mort', { s: d => d.sy / 8, dy: 0.1 });
   instanced(M.cactus, foliage, scatter(380, b => b === 'desert', (x, z) => {
     const h = 1.6 + rng() * 2.6;
     if (h > 3) addObstacle(x, z, 0.4);
@@ -717,19 +736,19 @@ function buildDecor(rng, sites, nodeSpots) {
       const sz = big ? 2.2 + rng() * 4.5 : 0.25 + rng() * 1.1;
       if (sz > 1.2) addObstacle(x, z, sz * 0.85);
       const tint = b === 'desert' ? lin('#d8b080') : b === 'foret' ? lin('#7a8a5a') : b === 'sel' ? lin('#e0dcd0') : null;
-      return { x, y: heightAt(x, z) + sz * 0.12, z, ry: rng() * 6, rx: (rng() - 0.5) * 0.4, sx: sz * (0.8 + rng() * 0.5), sy: sz * (0.6 + rng() * 0.5), sz: sz * (0.8 + rng() * 0.5), tint: 0.8 + rng() * 0.3, hue: tint };
-    }));
+      return { x, y: heightAt(x, z) + sz * 0.12, z, ry: rng() * 6, rx: (rng() - 0.5) * 0.4, sx: sz * (0.8 + rng() * 0.5), sy: sz * (0.6 + rng() * 0.5), sz: sz * (0.8 + rng() * 0.5), tint: 0.8 + rng() * 0.3, hue: tint, skipNear: sz < 0.6 };
+    }), true, 'rocher', { s: d => d.sx / 1.7, dy: -0.2 });
   }
   // buissons, touffes
   instanced(M.bush, windy(0.25, 0.1), scatter(900, b => b === 'steppe' || b === 'foret' || (b === 'desert' && rng() < 0.3), (x, z) => {
     const sz = 0.6 + rng() * 1.1;
     const b = biomeAt(x, z);
-    return { x, y: heightAt(x, z) - 0.1, z, ry: rng() * 6, sx: sz * 1.2, sy: sz * (0.8 + rng() * 0.4), sz: sz * 1.2, tint: 0.8 + rng() * 0.35, hue: b === 'desert' ? lin('#b8a060') : b === 'foret' ? lin('#4f7a34') : null };
-  }));
+    return { x, y: heightAt(x, z) - 0.1, z, ry: rng() * 6, sx: sz * 1.2, sy: sz * (0.8 + rng() * 0.4), sz: sz * 1.2, tint: 0.8 + rng() * 0.35, hue: b === 'desert' ? lin('#b8a060') : b === 'foret' ? lin('#4f7a34') : null, skipNear: b === 'desert' };
+  }), true, 'buisson', { s: d => d.sx * 0.9 });
   instanced(M.tuft, windy(0.5, 0), scatter(2600, b => b !== 'sel', (x, z) => {
     const sz = 0.8 + rng() * 1.2, b = biomeAt(x, z);
-    return { x, y: heightAt(x, z) - 0.05, z, ry: rng() * 6, sx: sz, sy: sz, sz: sz, tint: 0.85 + rng() * 0.3, hue: b === 'foret' ? lin('#5a8a3a') : b === 'desert' ? lin('#d0b070') : null };
-  }), false);
+    return { x, y: heightAt(x, z) - 0.05, z, ry: rng() * 6, sx: sz, sy: sz, sz: sz, tint: 0.85 + rng() * 0.3, hue: b === 'foret' ? lin('#5a8a3a') : b === 'desert' ? lin('#d0b070') : null, skipNear: b === 'desert' || b === 'montagne' || rng() < 0.4 };
+  }), false, 'plante', { s: d => d.sx * 0.7 });
   // sel
   instanced(M.salt, foliage, scatter(380, b => b === 'sel', (x, z) => {
     const sz = 0.6 + rng() * 1.4;

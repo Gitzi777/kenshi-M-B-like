@@ -183,6 +183,8 @@ select { background: #2a2117; color: #fff; border: 1px solid #6b5536; border-rad
 .skillgrid .sk.cb i { background: #d76a4a; }
 .skillgrid .sk span { opacity: .8; }
 
+#cModel { gap: 4px; margin-bottom: 6px; }
+#cModel button.on { background: linear-gradient(180deg, #c27a34, #8e4f1e); }
 /* ---------- Refonte visuelle : thème cuir et laiton ---------- */
 :root {
   --ink: #f3e8d4; --muted: #c2b293; --gold: #e6b865; --gold-2: #f5d38e; --red: #e07a64; --green: #9bd77f;
@@ -236,3 +238,10 @@ input, select { background: rgba(0,0,0,.35); border: 1px solid var(--edge-soft);
 .float { font-family: 'Inter', sans-serif; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,.9), 0 0 8px rgba(0,0,0,.4); }
 #ko h1 { font-family: 'Cinzel', serif; letter-spacing: .08em; }
 #prompt { background: rgba(18,12,8,.85); border: 1px solid var(--edge); border-radius: 10px; }
+
+#loading { position: absolute; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  background: radial-gradient(ellipse at center, #3a2a18 0%, #120c06 75%); }
+#loading h1 { font-size: 54px; margin: 0; background: linear-gradient(180deg, #ffe2a2, #c98a3c); -webkit-background-clip: text; background-clip: text; color: transparent; }
+#loading .lbar { width: 320px; height: 8px; border-radius: 6px; background: rgba(0,0,0,.5); overflow: hidden; border: 1px solid rgba(230,184,101,.35); }
+#loadBar { width: 0; height: 100%; background: linear-gradient(90deg, #c27a34, #f5d38e); transition: width .2s; }
+#loading p { color: #c2b293; }

@@ -11,6 +11,7 @@
 <body>
   <div id="view"></div>
   <div id="vignette"></div>
+  <div id="loading"><h1>Terres Arides</h1><div class="lbar"><div id="loadBar"></div></div><p id="loadText">Chargement des personnages et des paysages…</p></div>
 
   <!-- Création du personnage -->
   <div id="creation" class="panel">
@@ -24,6 +25,7 @@
     <div class="label">Origine</div>
     <div id="cOrigins" class="choices"></div>
     <div class="label">Tenue</div>
+    <div id="cModel" class="swatches models"></div>
     <div id="cBody" class="swatches"></div>
     <div class="label">Peau</div>
     <div id="cSkin" class="swatches"></div>
@@ -91,6 +93,9 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="js/data.js"></script>
   <script src="js/world.js"></script>
+  <script src="js/vendor/GLTFLoader.js"></script>
+  <script src="js/vendor/SkeletonUtils.js"></script>
+  <script src="js/assets.js"></script>
   <script src="js/gfx.js"></script>
   <script src="js/towns.js"></script>
   <script src="js/fx.js"></script>

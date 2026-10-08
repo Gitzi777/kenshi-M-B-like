@@ -517,7 +517,7 @@ function recruit(s, veteran, idx) {
     u = makeUnit({
       faction: 'player', x: player.pos.x + rand(-2, 2), z: player.pos.z + rand(-2, 2), name: r.name,
       maxHp: r.maxHp, str: r.str, speed: 4.7, blockChance: 0.3, blockSkill: 0.5, skills: r.skills, equip: { ...r.equip },
-      arrows: 20, look: { body: player.look.body, skin: pick(SKIN_COLORS), pants: '#3b2f22', height: rand(0.93, 1.08) },
+      arrows: 20, look: { body: player.look.body, tint: player.look.body, skin: pick(SKIN_COLORS), pants: '#3b2f22', height: rand(0.93, 1.08), model: pick(['rogue', 'barbarian', 'knight', 'rogue_hooded']) },
     });
     if (u.equip.bow) u.archer = true;
   }
@@ -536,7 +536,7 @@ function hireMerc(id) {
     faction: 'player', x: player.pos.x + rand(-2, 2), z: player.pos.z + rand(-2, 2), name: m.name,
     maxHp: 75, str: 2 + Math.floor(sk(m, 'force') / 15), speed: 4.7, blockChance: 0.3, blockSkill: 0.5, arrows: 20,
     equip: tier > 30 ? { weapon: 'sabre', armor: 'cuir', helmet: 'casque_cuir' } : { weapon: 'machette', armor: 'tunique', helmet: 'capuche' },
-    look: { body: player.look.body, skin: pick(SKIN_COLORS), pants: '#3b2f22', height: rand(0.93, 1.08) },
+    look: { body: player.look.body, tint: player.look.body, skin: pick(SKIN_COLORS), pants: '#3b2f22', height: rand(0.93, 1.08), model: pick(['rogue', 'barbarian', 'knight', 'rogue_hooded']) },
   });
   bindUnit(u, m);
   u.title = '';
@@ -1083,7 +1083,8 @@ function createPlayer(d) {
 }
 
 // ---------- Création du personnage ----------
-const creation = { name: 'Vagabond', origin: ORIGINS[0], body: BODY_COLORS[0], skin: SKIN_COLORS[1], height: 1, stats: { F: 4, A: 4, E: 4 } };
+const creation = { name: 'Vagabond', origin: ORIGINS[0], model: 'rogue_hooded', body: BODY_COLORS[0], skin: SKIN_COLORS[1], height: 1, stats: { F: 4, A: 4, E: 4 } };
+const MODEL_NAMES = { rogue_hooded: 'Encapuchonné', rogue: 'Aventurier', barbarian: 'Barbare', knight: 'Chevalier', mage: 'Mage' };
 const FREE_POINTS = 6;
 const pointsLeft = () => FREE_POINTS - (creation.stats.F + creation.stats.A + creation.stats.E - 12);
 function finalStats() {
@@ -1096,13 +1097,14 @@ function previewPlayer() {
   const g = gatePos(startTown(), 6);
   if (player) removeUnit(player);
   player = makeUnit({ faction: 'player', isPlayer: true, sheathed: true, x: g.x, z: g.z, name: creation.name,
-    look: { body: creation.body, skin: creation.skin, height: creation.height, pants: '#3b2f22' },
+    look: { body: creation.body, skin: creation.skin, height: creation.height, pants: '#3b2f22', model: creation.model, tint: creation.body },
     equip: { ...creation.origin.equip } });
   player.inv = [];
 }
 function renderCreation() {
   $('cOrigins').innerHTML = ORIGINS.map(o =>
     `<div class="choice ${o === creation.origin ? 'sel' : ''}" data-origin="${o.id}"><b>${o.name}</b><small>${o.desc}</small></div>`).join('');
+  $('cModel').innerHTML = ASSETS.ready ? Object.entries(MODEL_NAMES).map(([k, n]) => `<button class="${k === creation.model ? 'on' : ''}" data-model="${k}">${n}</button>`).join('') : '';
   $('cBody').innerHTML = BODY_COLORS.map(c =>
     `<div class="swatch ${c === creation.body ? 'sel' : ''}" data-body="${c}" style="background:${c}"></div>`).join('');
   $('cSkin').innerHTML = SKIN_COLORS.map(c =>
@@ -1123,16 +1125,17 @@ function renderCreation() {
     <div class="wflags">${majors.map(f => flagImg(f, 16) + ' ' + esc(f.name)).join('<br>')}</div>`;
 }
 $('creation').addEventListener('click', e => {
-  const el = e.target.closest('[data-origin],[data-body],[data-skin],[data-plus],[data-minus]');
+  const el = e.target.closest('[data-origin],[data-body],[data-skin],[data-plus],[data-minus],[data-model]');
   if (!el) return;
   const d = el.dataset;
   if (d.origin) creation.origin = ORIGINS.find(o => o.id === d.origin);
   if (d.body) creation.body = d.body;
+  if (d.model) creation.model = d.model;
   if (d.skin) creation.skin = d.skin;
   if (d.plus && pointsLeft() > 0 && creation.stats[d.plus] < 10) creation.stats[d.plus]++;
   if (d.minus && creation.stats[d.minus] > 1) creation.stats[d.minus]--;
   renderCreation();
-  if (d.body || d.skin || d.origin) previewPlayer();
+  if (d.body || d.skin || d.origin || d.model) previewPlayer();
 });
 $('cName').addEventListener('input', e => { creation.name = e.target.value.trim(); });
 $('cHeight').addEventListener('input', e => { creation.height = Number(e.target.value); previewPlayer(); });

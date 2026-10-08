@@ -8,7 +8,7 @@ function makeCharacter(look) {
   const body = new T.Group();
   body.scale.setScalar(look.height || 1);
   root.add(body);
-  const own = (c, r = 0.85) => new T.MeshStandardMaterial({ color: lin(c), roughness: r, map: TEX.grain });
+  const own = (c, r = 0.85) => toonMat({ color: lin(c), roughness: r, map: TEX.grain });
   const mBody = own(look.body), mSkin = own(look.skin, 0.7), mPants = own(look.pants || '#3b2f22');
   const seed = Math.abs(Math.round(((look.skin || '').charCodeAt(2) || 7) * 31 + (look.height || 1) * 997 + (look.body || '').length * 13));
   const mHair = own(look.hair || HAIR_COLORS[seed % HAIR_COLORS.length], 0.95);
@@ -81,8 +81,8 @@ function makeAnimalModel(sp) {
   const body = new T.Group();
   body.scale.setScalar(sp.size);
   root.add(body);
-  const m = new T.MeshStandardMaterial({ color: lin(sp.color), flatShading: true, roughness: 0.9, map: TEX.grain });
-  const dark = new T.MeshStandardMaterial({ color: lin('#1a1410'), flatShading: true });
+  const m = toonMat({ color: lin(sp.color), flatShading: true, roughness: 0.9, map: TEX.grain });
+  const dark = toonMat({ color: lin('#1a1410'), flatShading: true });
   // formes arrondies : ellipsoïdes plutôt que des cubes
   const box = (w, h, d, mm, x, y, z) => {
     const geo = w > 0.09 && h > 0.09 && d > 0.09 ? new T.IcosahedronGeometry(0.5, 1).scale(w * 1.12, h * 1.12, d * 1.12) : new T.BoxGeometry(w, h, d);
@@ -121,7 +121,7 @@ function makeAnimalModel(sp) {
 function clearGroup(g) { while (g.children.length) g.remove(g.children[0]); }
 const METAL = {};
 function metal(color) {
-  if (!METAL[color]) METAL[color] = new T.MeshStandardMaterial({ color: lin(color), roughness: 0.32, metalness: 0.55, flatShading: true });
+  if (!METAL[color]) METAL[color] = toonMat({ color: lin(color), roughness: 0.32, metalness: 0.55, flatShading: true });
   return METAL[color];
 }
 function part(w, h, d, color, x = 0, y = 0, z = 0, mm) {
@@ -195,6 +195,7 @@ function buildHelmet(id, fac) {
 function dressUnit(u) {
   if (u.animal) return;
   const c = u.c;
+  if (c.skinned) { dressSkinned(u); return; }
   const fac = u.faction === 'player' ? (state.allegiance ? F(state.allegiance) : null) : F(u.faction);
   const armor = IT(u.equip.armor);
   const bodyHex = armor && armor.color ? armor.color : u.look.body;
@@ -279,9 +280,19 @@ function makeLabel(u) {
 }
 function refreshLabel(u) { if (u.label) { u.c.root.remove(u.label); u.label = null; } }
 
+// silhouette par défaut d'un PNJ selon sa faction et son rôle
+function defaultModel(o) {
+  if (o.civil) return pick(['rogue', 'mage', 'rogue_hooded', 'rogue']);
+  if (o.troop === 'general') return 'knight';
+  if (o.troop === 'archer') return pick(['rogue', 'rogue_hooded']);
+  const f = F(o.faction);
+  const list = f && CULTURE_MODEL[f.culture] || ['rogue', 'barbarian', 'knight'];
+  return pick(list);
+}
 function makeUnit(o) {
   const look = o.look || {};
-  const c = o.species ? makeAnimalModel(o.species) : makeCharacter(look);
+  if (!o.species && ASSETS.ready) { if (!look.model) look.model = defaultModel(o); if (!look.tint) look.tint = look.body; }
+  const c = o.species ? makeAnimalModel(o.species) : ASSETS.ready ? makeSkinnedCharacter(look) : makeCharacter(look);
   c.root.position.set(o.x, heightAt(o.x, o.z), o.z);
   scene.add(c.root);
   const maxHp = o.maxHp || 80;
@@ -541,6 +552,7 @@ function damage(o, by, amount, dir, ranged) {
     if (by.isPlayer) impact(0.22, 0.07);
     else if (o.isPlayer) impact(0.32, 0.05);
     o.flinch = 0.25;
+    o.hurtId = (o.hurtId || 0) + 1;
   }
   amount = Math.max(blocked ? 0 : 1, Math.round(amount));
   if (isPlayerSide(by) && !isPlayerSide(o) && !o.animal && !isFugitiveFor(by, o.faction) && !hostileF('player', o.faction)) playerAttacked(o.faction);
@@ -1167,6 +1179,7 @@ function updateNPC(u, dt, idx) {
 const lerp = (a, b, t) => a + (b - a) * clamp(t, 0, 1);
 function animate(u, dt) {
   const c = u.c;
+  if (c.skinned) { animateSkinned(u, dt); return; }
   c.root.rotation.y = u.yaw;
   const down = u.dead || u.down > 0 || (u.isPlayer && state.ko > 0);
   if (u.animal) {

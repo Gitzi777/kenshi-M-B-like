@@ -442,6 +442,7 @@ function updatePlayer(dt) {
   if (tank && !state.harvest && !state.picking) {
     if (s) player.yaw -= s * dt * (f < 0 ? -2.4 : 2.4);
     if (f || s) player.cmd = null;
+    player.backward = f < 0;
     const mul = f ? (f < 0 ? 0.6 : 1) * (player.block || player.atk ? 0.5 : state.run ? 1.6 : 1) * (player.carrying ? 0.65 : 1) : 0;
     accelerate(player, Math.sin(player.yaw) * f * speedOf(player) * mul, Math.cos(player.yaw) * f * speedOf(player) * mul, dt);
     if (player.draw >= 0) player.draw += dt;
@@ -677,6 +678,7 @@ function updateSky() {
     sun.shadow.camera.updateProjectionMatrix();
   }
   updateGrass(state.mode === 'play' ? p : null);
+  updateNearNature(p);
 }
 
 function waveFlags(t) {
@@ -684,14 +686,18 @@ function waveFlags(t) {
   for (const n of state.nodes) if (n.flag) n.flag.rotation.y = Math.sin(t * 2 + n.x) * 0.25;
 }
 
-// ---------- Démarrage ----------
-{
+// ---------- Démarrage : on charge les modèles 3D, puis on crée le monde ----------
+function boot() {
+  buildNearNature();
   const save = readSave();
   generateWorld(save && save.seed ? save.seed : randomSeed());
+  applyQuality();
+  renderCreation();
+  previewPlayer();
+  $('loading').classList.add('hidden');
+  last = performance.now();
+  requestAnimationFrame(loop);
 }
-applyQuality();
-renderCreation();
-previewPlayer();
 
 let last = performance.now();
 let hudTimer = 0;
@@ -730,5 +736,8 @@ function loop(now) {
   }
   requestAnimationFrame(loop);
 }
-requestAnimationFrame(loop);
+loadAssets(p => { $('loadBar').style.width = Math.round(p * 100) + '%'; }, ok => {
+  if (!ok) $('loadText').textContent = 'Modèles détaillés indisponibles : version simple.';
+  setTimeout(boot, 30);
+});
 window.addEventListener('beforeunload', () => saveGame(true));
