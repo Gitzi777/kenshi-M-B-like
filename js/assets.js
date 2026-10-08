@@ -11,7 +11,7 @@ function loadAssets(onProgress, onDone) {
   const loader = new THREE.GLTFLoader();
   const files = [...CHAR_FILES, 'weapons', 'nature', 'village'];
   let done = 0;
-  Promise.all(files.map(f => new Promise((res, rej) => loader.load('assets/' + f + '.glb', g => { onProgress(++done / files.length); res([f, g]); }, undefined, rej))))
+  Promise.all(files.map(f => new Promise((res, rej) => loader.load('assets/' + f + (window.TA_ASSET_EXT || '.glb'), g => { onProgress(++done / files.length); res([f, g]); }, undefined, rej))))
     .then(list => {
       for (const [f, g] of list) {
         if (CHAR_FILES.includes(f)) ASSETS.chars[f] = g.scene;
