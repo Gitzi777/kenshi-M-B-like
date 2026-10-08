@@ -116,6 +116,7 @@ function renderHud() {
     const lk = lockTargetNear(player.pos);
     if (corpse) txt = `F : fouiller ${corpse.name}${corpse.down > 0 ? ' · G : le porter · K : l\'achever' : ''}`;
     else if (lk) txt = `E : crocheter (${lk.name}, niveau ${lk.lock})`;
+    else if (talkTargetNear() && (!state.currentService || d2(talkTargetNear().pos, player.pos) < 1.8)) txt = `E : parler à ${talkTargetNear().name}`;
     else if (state.currentService) txt = `E : ${state.currentService.name}`;
     else if (state.currentTown && state.currentTown.type === 'repaire') txt = '';
     else if (state.currentNode) txt = `E : ${RESOURCES[state.currentNode.type].name}`;
@@ -202,7 +203,7 @@ function drawMinimap() {
 }
 
 // ---------- Panneaux ----------
-const PANELS = { town: 'town', inv: 'inventory', loot: 'loot', map: 'worldmap', node: 'nodepanel', settings: 'settings', lock: 'lockpanel', toll: 'tollpanel' };
+const PANELS = { town: 'town', inv: 'inventory', loot: 'loot', map: 'worldmap', node: 'nodepanel', settings: 'settings', lock: 'lockpanel', toll: 'tollpanel', talk: 'talkpanel', journal: 'journal' };
 function openPanel(name) {
   state.panel = name;
   state.craftStation = null;
@@ -217,7 +218,7 @@ function closePanel() {
 }
 function togglePanel(name) { if (state.panel === name) closePanel(); else openPanel(name); }
 function renderPanel() {
-  const r = { town: renderTown, inv: renderInventory, loot: renderLoot, map: renderMap, node: renderNode, settings: renderSettings, lock: renderLock, toll: renderToll }[state.panel];
+  const r = { town: renderTown, inv: renderInventory, loot: renderLoot, map: renderMap, node: renderNode, settings: renderSettings, lock: renderLock, toll: renderToll, talk: () => renderTalk(), journal: () => renderJournal() }[state.panel];
   if (r) r();
 }
 
@@ -1006,7 +1007,7 @@ function saveGame(silent) {
       home: p.home, target: p.target, cargo: p.cargo || null, members: p.mat ? p.units.filter(u => !u.dead).map(u => u.pid || null) : p.members || null,
       general: p.general || null, name: p.name })),
     people: state.people || null,
-    chronicle: state.chronicle, trades: state.trades, saved: Date.now(), jail: state.jail, tollPaid: state.tollPaid, tollAngry: state.tollAngry,
+    chronicle: state.chronicle, trades: state.trades, quests: state.quests || [], saved: Date.now(), jail: state.jail, tollPaid: state.tollPaid, tollAngry: state.tollAngry,
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -1030,7 +1031,7 @@ function loadGame(data) {
     money: data.money, goods: { ...state.goods, ...data.goods }, day: data.day, dayTimer: data.dayTimer, kills: data.kills,
     order: data.order || 'follow', rep: data.rep, allegiance: data.allegiance, relations: data.relations,
     warSince: data.warSince || {}, clock: data.clock || 0, chronicle: data.chronicle || [], trades: data.trades || [],
-    tollPaid: data.tollPaid || {}, tollAngry: data.tollAngry || {},
+    tollPaid: data.tollPaid || {}, tollAngry: data.tollAngry || {}, quests: data.quests || [],
   });
   for (const sd of data.settlements) {
     const s = settlementByName(sd.name);

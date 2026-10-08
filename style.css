@@ -245,3 +245,13 @@ input, select { background: rgba(0,0,0,.35); border: 1px solid var(--edge-soft);
 #loading .lbar { width: 320px; height: 8px; border-radius: 6px; background: rgba(0,0,0,.5); overflow: hidden; border: 1px solid rgba(230,184,101,.35); }
 #loadBar { width: 0; height: 100%; background: linear-gradient(90deg, #c27a34, #f5d38e); transition: width .2s; }
 #loading p { color: #c2b293; }
+
+.dialog { background: rgba(0,0,0,.25); border-radius: 10px; padding: 10px 12px; max-height: 260px; overflow-y: auto; border: 1px solid var(--edge-soft); }
+.dialog p { margin: 6px 0; line-height: 1.5; }
+.dialog p.npc { color: #f3e8d4; font-style: italic; }
+.dialog p.npc::before { content: '« '; color: var(--gold); } .dialog p.npc::after { content: ' »'; color: var(--gold); }
+.dialog p.me { color: var(--muted); text-align: right; }
+.dopts { display: grid; gap: 6px; margin-top: 10px; }
+.dopts button { text-align: left; background: rgba(255,255,255,.04); border-color: var(--edge-soft); box-shadow: none; }
+.dopts button:hover { background: rgba(230,184,101,.14); }
+.dopts button b { color: var(--gold); margin-right: 4px; }

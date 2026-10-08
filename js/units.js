@@ -615,6 +615,7 @@ function makeLoot(o) {
 const lootEmpty = l => !l || (!l.items.length && !l.coins && !Object.values(l.goods).some(v => v > 0));
 
 function kill(o, by) {
+  if (typeof questOnKill === 'function') questOnKill(o, by);
   // ton escouade n'est jamais tuée : elle tombe K.O. comme dans Kenshi
   if (isPlayerSide(o)) { downUnit(o); return; }
   // les humains tombent souvent K.O. au lieu de mourir (on peut les fouiller, les porter, les livrer)

@@ -237,12 +237,15 @@ window.addEventListener('keydown', e => {
   if (state.ko > 0) return;
   if (k === 'o') { togglePanel('settings'); return; }
   if (k === 'm') togglePanel('map');
+  else if (k === 'j') togglePanel('journal');
   else if (k === 'i' || e.code === 'Tab') togglePanel('inv');
   else if (k === 'e') {
     if (state.panel === 'town' || state.panel === 'node' || state.panel === 'lock') { closePanel(); refocus(); }
     else if (!state.panel) {
       const lk = lockTargetNear(player.pos);
+      const npc = !player.jailed && !player.carrying ? talkTargetNear() : null;
       if (player.carrying && state.currentService && state.currentService.type === 'prison') openBuilding(state.currentTown, state.currentService);
+      else if (npc && (!state.currentService || d2(npc.pos, player.pos) < 1.8)) openTalk(npc);
       else if (lk && (player.jailed || !state.currentService)) { state.lockTarget = lk; openPanel('lock'); }
       else if (state.currentService && !player.jailed) openBuilding(state.currentTown, state.currentService);
       else if (lk) { state.lockTarget = lk; openPanel('lock'); }
@@ -515,6 +518,8 @@ function update(dt) {
   updateArrows(dt);
   updateWorld(dt);
   updatePeople(dt);
+  state.questTimer = (state.questTimer || 0) - dt;
+  if (state.questTimer <= 0) { state.questTimer = 2; questTick(); }
   updateWildlife(dt);
   updateStorm(dt);
 
