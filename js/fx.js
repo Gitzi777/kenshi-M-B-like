@@ -125,7 +125,7 @@ function burst(pos, o = {}) {
       vx, vy: (o.up != null ? o.up : 2) * rand(0.5, 1.2), vz,
       life: (o.life || 0.6) * rand(0.6, 1.2), age: 0, size: (o.size || 0.08) * rand(0.6, 1.3),
       grav: o.grav != null ? o.grav : 9, drag: o.drag || 1.5, rot: rand(0, 6), spin: rand(-8, 8),
-      color: new T.Color(pick(colors)), grow: o.grow || 0,
+      color: new T.Color(pick(colors)).convertSRGBToLinear(), grow: o.grow || 0,
     });
   }
 }

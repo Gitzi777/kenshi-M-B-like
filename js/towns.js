@@ -58,7 +58,7 @@ function buildSettlement(s) {
   const fac = F(s.faction);
   Object.assign(s, { flags: [], stalls: [], services: [], blockers: [], buildings: [], cells: [], chests: [], homes: [] });
   const solid = m => { s.blockers.push(m); return m; };
-  const box = (w, h, d, color, x = 0, y = 0, z = 0) => { const m = mesh(new T.BoxGeometry(w, h, d), color); m.position.set(x, y, z); return m; };
+  const box = (w, h, d, color, x = 0, y = 0, z = 0, tex) => { const m = mesh(tex ? boxGeoUV(w, h, d) : new T.BoxGeometry(w, h, d), color, true, tex); m.position.set(x, y, z); return m; };
   const addFlag = (lx, lz, height) => {
     const fp = makeFlagPole(fac, height);
     fp.g.position.set(lx, ly(lx, lz), lz);
@@ -77,17 +77,22 @@ function buildSettlement(s) {
     const W = (x, z) => ({ x: s.x + lx + x * c + z * sn, z: s.z + lz - x * sn + z * c });
     const seg = (x1, z1, x2, z2) => { const a = W(x1, z1), e = W(x2, z2); return addSeg(a.x, a.z, e.x, e.z); };
     const hw = w / 2, hd = d / 2, door = 1.9;
-    b.add(box(w, 0.12, d, '#7a6248', 0, 0.06, 0));
-    b.add(solid(box(w, h, 0.3, color, 0, h / 2, -hd)), solid(box(0.3, h, d, color, -hw, h / 2, 0)), solid(box(0.3, h, d, color, hw, h / 2, 0)));
+    b.add(box(w, 0.12, d, '#7a6248', 0, 0.06, 0, 'wood'));
+    b.add(solid(box(w, h, 0.3, color, 0, h / 2, -hd, 'plaster')), solid(box(0.3, h, d, color, -hw, h / 2, 0, 'plaster')), solid(box(0.3, h, d, color, hw, h / 2, 0, 'plaster')));
     const side = (w - door) / 2;
-    b.add(solid(box(side, h, 0.3, color, -hw + side / 2, h / 2, hd)), solid(box(side, h, 0.3, color, hw - side / 2, h / 2, hd)));
-    b.add(box(door, h - 2.6, 0.3, color, 0, 2.6 + (h - 2.6) / 2, hd));
+    b.add(solid(box(side, h, 0.3, color, -hw + side / 2, h / 2, hd, 'plaster')), solid(box(side, h, 0.3, color, hw - side / 2, h / 2, hd, 'plaster')));
+    b.add(box(door, h - 2.6, 0.3, color, 0, 2.6 + (h - 2.6) / 2, hd, 'plaster'));
+    // soubassement sombre, encadrement de porte, poutres qui dépassent, fenêtres
+    b.add(box(w + 0.06, 0.5, 0.34, '#6a5440', 0, 0.25, -hd, 'stone'), box(0.34, 0.5, d + 0.06, '#6a5440', -hw, 0.25, 0, 'stone'), box(0.34, 0.5, d + 0.06, '#6a5440', hw, 0.25, 0, 'stone'));
+    b.add(box(0.16, 2.7, 0.4, '#5a4030', -door / 2 - 0.08, 1.35, hd, 'wood'), box(0.16, 2.7, 0.4, '#5a4030', door / 2 + 0.08, 1.35, hd, 'wood'), box(door + 0.4, 0.18, 0.42, '#5a4030', 0, 2.68, hd, 'wood'));
+    for (let k = -1; k <= 1; k++) b.add(box(0.14, 0.14, d + 0.9, '#5a4030', k * (hw - 0.6), h - 0.35, 0, 'wood'));
+    for (const sx of [-1, 1]) if (w > 5) b.add(box(0.7, 0.6, 0.06, '#2a2018', sx * (hw - 1.3), h * 0.6, hd + 0.13), box(0.86, 0.1, 0.12, '#5a4030', sx * (hw - 1.3), h * 0.6 - 0.36, hd + 0.16, 'wood'));
     seg(-hw, -hd, hw, -hd); seg(-hw, -hd, -hw, hd); seg(hw, -hd, hw, hd);
     seg(-hw, hd, -door / 2, hd); seg(door / 2, hd, hw, hd);
     const roof = new T.Group();
-    const r = mesh(new T.ConeGeometry(Math.max(w, d) * 0.75, 2.2, 4), roofColor);
+    const r = mesh(new T.ConeGeometry(Math.max(w, d) * 0.75, 2.2, 4), roofColor, true, 'tiles');
     r.rotation.y = Math.PI / 4; r.scale.set(w / Math.max(w, d), 1, d / Math.max(w, d)); r.position.y = h + 1.1;
-    roof.add(r, box(w + 0.4, 0.2, d + 0.4, roofColor, 0, h + 0.05, 0));
+    roof.add(r, box(w + 0.4, 0.2, d + 0.4, roofColor, 0, h + 0.05, 0, 'wood'));
     b.add(roof);
     const info = { W, c: W(0, 0), yaw, hw, hd, roof, b };
     s.buildings.push(info);
@@ -201,17 +206,22 @@ function buildSettlement(s) {
       const a = i / segs * Math.PI * 2;
       if (Math.abs(angleDiff(a, s.gate)) < 0.14) continue;
       const wx = Math.cos(a) * s.r, wz = Math.sin(a) * s.r;
-      const w = mesh(new T.BoxGeometry(segLen, 5, 1.2), '#8d7350');
+      const w = mesh(boxGeoUV(segLen, 5, 1.2, 0.25), '#9a8060', true, 'stone');
       w.position.set(wx, ly(wx, wz) + 2, wz);
       w.rotation.y = -a - Math.PI / 2;
+      // créneaux
+      for (const k of [-0.25, 0.25]) w.add(box(segLen * 0.28, 0.7, 1.3, '#a08868', segLen * k, 2.85, 0, 'stone'));
       g.add(solid(w));
     }
     for (const sd of [-1, 1]) {
       const a = s.gate + sd * 0.17;
       const tx = Math.cos(a) * s.r, tz = Math.sin(a) * s.r;
-      const tower = mesh(new T.CylinderGeometry(1.8, 2.1, 8, 8), '#7a6243');
+      const tower = mesh(new T.CylinderGeometry(1.8, 2.1, 8, 10), '#8a7052', true, 'stone');
       tower.position.set(tx, ly(tx, tz) + 4, tz);
       g.add(solid(tower));
+      const cap = mesh(new T.ConeGeometry(2.6, 3, 10), '#7a3a26', true, 'tiles');
+      cap.position.set(tx, ly(tx, tz) + 9.5, tz);
+      g.add(cap, box(4.4, 0.5, 4.4, '#8a7052', tx, ly(tx, tz) + 8.1, tz, 'stone'));
       addFlag(tx, tz, 11);
     }
     const types = ['auberge', 'bazar', 'forge', 'tailleur', 'atelier', 'prison', s.capital ? 'palais' : 'caserne'];

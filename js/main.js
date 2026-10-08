@@ -665,28 +665,18 @@ function updateCamera(dt) {
   camera.lookAt(look);
 }
 
-const STORM_COLOR = new T.Color('#c9935a');
 function updateSky() {
   const phase = state.dayTimer / DAY_LENGTH;
-  const light = clamp(0.55 + 0.6 * Math.sin(phase * Math.PI * 2 + 0.3), 0.12, 1);
-  sun.intensity = light * 0.95;
-  hemi.intensity = 0.2 + 0.4 * light;
-  scene.background.copy(SKY_NIGHT).lerp(SKY_DAY, light);
   const storm = state.storm > 0 && player && biomeAt(player.pos.x, player.pos.z) === 'desert';
-  if (storm) scene.background.lerp(STORM_COLOR, 0.85);
-  scene.fog.color.copy(scene.background);
-  const far = isRTS() ? 520 : 340;
-  scene.fog.near += ((storm ? 8 : 90) - scene.fog.near) * 0.05;
-  scene.fog.far += ((storm ? 45 : far) - scene.fog.far) * 0.05;
-  const a = phase * Math.PI * 2;
-  const p = isRTS() ? { x: rts.sx, y: heightAt(rts.sx, rts.sz), z: rts.sz } : player.pos;
-  sun.position.set(p.x + Math.cos(a) * 60, p.y + 80, p.z + Math.sin(a) * 60 + 30);
-  sun.target.position.set(p.x, p.y, p.z);
-  const sh = isRTS() ? clamp(rts.sdist * 1.2, 45, 140) : 45;
+  const p = isRTS() ? { x: rts.sx, y: heightAt(rts.sx, rts.sz), z: rts.sz } : player ? player.pos : { x: 0, y: 0, z: 0 };
+  const atm = updateAtmosphere(phase, storm, p, isRTS());
+  updateTorch(atm.night, state.mode === 'play' && player ? player.pos : null);
+  const sh = isRTS() ? clamp(rts.sdist * 1.2, 45, 140) : 40;
   if (sun.shadow.camera.right !== sh) {
     Object.assign(sun.shadow.camera, { left: -sh, right: sh, top: sh, bottom: -sh });
     sun.shadow.camera.updateProjectionMatrix();
   }
+  updateGrass(state.mode === 'play' ? p : null);
 }
 
 function waveFlags(t) {
@@ -699,6 +689,7 @@ function waveFlags(t) {
   const save = readSave();
   generateWorld(save && save.seed ? save.seed : randomSeed());
 }
+applyQuality();
 renderCreation();
 previewPlayer();
 
@@ -718,6 +709,8 @@ function loop(now) {
   dirAcc.x *= 0.85; dirAcc.y *= 0.85;
   for (const u of units) animate(u, sim);
   updateParticles(sim);
+  gfxTime.value += dt;
+  if (state.mode === 'play') watchFps(dt);
   updateCamera(dt);
   applyShake(dt);
   updateSky();

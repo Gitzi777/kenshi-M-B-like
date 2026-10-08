@@ -13,6 +13,9 @@ const F = id => state.factions[id];
 const relKey = (a, b) => a < b ? a + '|' + b : b + '|' + a;
 
 // ---------- Scène ----------
+// couleurs : on écrit en sRGB, le rendu travaille en linéaire
+const lin = c => new T.Color(c).convertSRGBToLinear();
+const setLin = (color, c) => color.set(c).convertSRGBToLinear();
 const view = document.getElementById('view');
 const renderer = new T.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
@@ -35,21 +38,29 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-const hemi = new T.HemisphereLight(0xfff1d6, 0x6b5536, 0.6);
+const hemi = new T.HemisphereLight(0xc4daf2, 0x8f7250, 0.8);
 scene.add(hemi);
-const sun = new T.DirectionalLight(0xfff0d0, 1.0);
+const sun = new T.DirectionalLight(0xfff0d0, 2.4);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.04;
+sun.shadow.radius = 3;
 Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 300 });
 scene.add(sun, sun.target);
 
+// matériaux : couleur sRGB convertie, léger grain ; tex = 'plaster' | 'tiles' | 'wood' | 'stone'
 const matCache = {};
-function mat(color) {
-  if (!matCache[color]) matCache[color] = new T.MeshStandardMaterial({ color, flatShading: true, roughness: 0.95 });
-  return matCache[color];
+function mat(color, tex = 'grain') {
+  const key = color + '|' + tex;
+  if (!matCache[key]) {
+    matCache[key] = new T.MeshStandardMaterial({ color: new T.Color(color).convertSRGBToLinear(), flatShading: true, roughness: 0.9,
+      map: typeof TEX !== 'undefined' ? TEX[tex] : null });
+  }
+  return matCache[key];
 }
-function mesh(geo, color, shadow = true) {
-  const m = new T.Mesh(geo, mat(color));
+function mesh(geo, color, shadow = true, tex) {
+  const m = new T.Mesh(geo, mat(color, tex));
   m.castShadow = shadow; m.receiveShadow = true;
   return m;
 }
@@ -190,6 +201,7 @@ function factionFlag(f) {
     drawFlag(cv.getContext('2d'), f, 96, 64);
     f._flagCanvas = cv;
     f._flagTex = new T.CanvasTexture(cv);
+    f._flagTex.encoding = T.sRGBEncoding;
     f._flagURL = cv.toDataURL();
   }
   return f._flagTex;
@@ -220,7 +232,8 @@ function textSprite(text, size = 1, color = '#fff4dc') {
   g.strokeText(text, 256, 48);
   g.fillStyle = color;
   g.fillText(text, 256, 48);
-  const sp = new T.Sprite(new T.SpriteMaterial({ map: new T.CanvasTexture(cv), depthWrite: false }));
+  const tx = new T.CanvasTexture(cv); tx.encoding = T.sRGBEncoding;
+  const sp = new T.Sprite(new T.SpriteMaterial({ map: tx, depthWrite: false }));
   sp.scale.set(16 * size, 3 * size, 1);
   return sp;
 }
@@ -490,6 +503,10 @@ function generateWorld(seed, keepFactions = null) {
   buildHeightGrid();
   rebuildTerrainHeights();
 
+  planRoads(sites.map(s => ({ ...s, r: { camp: 26, repaire: 18 }[s.type] || 44, gate: Math.atan2(-s.z, -s.x) })));
+  TERRAIN_SPOTS = { sites: sites.map(s => ({ x: s.x, z: s.z, r: { camp: 26, repaire: 18 }[s.type] || 44 })), nodes: nodeSpots };
+  rebuildTerrainHeights();
+  buildRoads();
   buildDecor(rng, sites, nodeSpots);
   for (const s of sites) makeSettlement(s);
   for (const ns of nodeSpots) {
@@ -502,35 +519,140 @@ function generateWorld(seed, keepFactions = null) {
 }
 
 let terrainMesh = null;
+let TERRAIN_SPOTS = { sites: [], nodes: [] };
+const TERRAIN_SEG = 360;
 function buildTerrain() {
-  const geo = new T.PlaneGeometry(GRID_SIZE, GRID_SIZE, GRID_N, GRID_N);
+  const geo = new T.PlaneGeometry(GRID_SIZE, GRID_SIZE, TERRAIN_SEG, TERRAIN_SEG);
   geo.rotateX(-Math.PI / 2);
   geo.setAttribute('color', new T.Float32BufferAttribute(new Float32Array(geo.attributes.position.count * 3), 3));
-  terrainMesh = new T.Mesh(geo, new T.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1 }));
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * GRID_SIZE / 7, uv.getY(i) * GRID_SIZE / 7);
+  terrainMesh = new T.Mesh(geo, new T.MeshStandardMaterial({ vertexColors: true, roughness: 1, map: TEX.ground }));
   terrainMesh.receiveShadow = true;
   worldGroup.add(terrainMesh);
   rebuildTerrainHeights();
 }
+// palette du sol (sRGB) : chaque biome se fond dans le suivant
+const GROUND = {
+  desert: lin('#c99e66'), dune: lin('#d6b07a'), steppe: lin('#a49c58'), steppeDry: lin('#b8a468'), foret: lin('#4a6e32'),
+  foretDark: lin('#3a5a2a'), montagne: lin('#8a7f74'), rock: lin('#6e655c'), snow: lin('#f0f0f2'), sel: lin('#e6e2d6'),
+  town: lin('#b49b78'), field: lin('#7a5c3e'), road: lin('#9c8262'),
+};
+const _gc = new T.Color(), _gt = new T.Color();
+function terrainColor(x, z, h, flat) {
+  const e = elevAt(x, z), m = moistN(x / 220, z / 220);
+  const big = detailN(x / 70, z / 70, 2), fine = detailN(x / 9, z / 9, 1);
+  // plaines : désert → steppe → forêt
+  const wSteppe = smooth(0.45, 0.49, m), wForest = smooth(0.55, 0.59, m);
+  _gc.copy(GROUND.desert).lerp(GROUND.dune, smooth(0.45, 0.7, big));
+  _gt.copy(GROUND.steppe).lerp(GROUND.steppeDry, smooth(0.4, 0.75, big));
+  _gc.lerp(_gt, wSteppe);
+  _gt.copy(GROUND.foret).lerp(GROUND.foretDark, smooth(0.35, 0.7, big));
+  _gc.lerp(_gt, wForest);
+  // marais salants
+  const wSalt = (1 - smooth(0.40, 0.44, e)) * (1 - smooth(0.40, 0.44, m));
+  _gc.lerp(GROUND.sel, wSalt);
+  // montagnes : roche, falaises dans les pentes, neige sur les sommets
+  _gc.lerp(GROUND.montagne, smooth(0.62, 0.66, e));
+  _gc.lerp(GROUND.rock, smooth(0.86, 0.7, flat) * 0.85);
+  _gc.lerp(GROUND.snow, smooth(40, 50, h) * smooth(0.7, 0.85, flat));
+  // terre battue des villes, champs labourés
+  for (const s of TERRAIN_SPOTS.sites) {
+    const d = Math.hypot(s.x - x, s.z - z);
+    if (d < s.r + 6) _gc.lerp(GROUND.town, (1 - smooth(s.r - 6, s.r + 6, d)) * 0.75);
+  }
+  for (const n of TERRAIN_SPOTS.nodes) {
+    const d = Math.hypot(n.x - x, n.z - z);
+    if (d < 14) _gc.lerp(['ferme', 'coton', 'epices'].includes(n.type) ? GROUND.field : GROUND.town, (1 - smooth(8, 14, d)) * 0.7);
+  }
+  if (ROADS.length) { const rd = onRoad(x, z); if (rd < 4) _gc.lerp(GROUND.road, (1 - smooth(1.5, 4, rd)) * 0.55); }
+  // variations : grandes taches et petit grain
+  const k = 0.9 + big * 0.16 + (fine - 0.5) * 0.1;
+  return _gc.multiplyScalar(k);
+}
 function rebuildTerrainHeights() {
   const geo = terrainMesh.geometry;
   const pos = geo.attributes.position, col = geo.attributes.color;
-  const c = new T.Color();
+  for (let i = 0; i < pos.count; i++) pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  const nor = geo.attributes.normal;
   for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), z = pos.getZ(i);
-    const h = heightAt(x, z);
-    pos.setY(i, h);
-    const b = BIOMES[biomeAt(x, z)].color;
-    const k = (detailN(x / 15, z / 15, 1) - 0.5) * 0.08 + clamp(h / 120, -0.05, 0.12);
-    c.setRGB(b[0] + k, b[1] + k, b[2] + k);
+    const c = terrainColor(pos.getX(i), pos.getZ(i), pos.getY(i), nor.getY(i));
     col.setXYZ(i, c.r, c.g, c.b);
   }
-  pos.needsUpdate = true; col.needsUpdate = true;
-  geo.computeVertexNormals();
+  col.needsUpdate = true;
 }
 
+// ---------- Décor : arbres, rochers, buissons, cactus ----------
+const DECOR = {};
+function decorModels() {
+  if (DECOR.pine) return DECOR;
+  const cyl = (rt, rb, h, seg = 6) => new T.CylinderGeometry(rt, rb, h, seg);
+  const ico = (r, d = 1) => new T.IcosahedronGeometry(r, d);
+  // pin : tronc et étages de branches (hauteur 1, mis à l'échelle)
+  // étage de branches : jupe en étoile qui retombe un peu
+  const skirt = (r, h, seg) => {
+    const g = new T.ConeGeometry(r, h, seg * 2, 1, true);
+    const P = g.attributes.position;
+    for (let i = 0; i < P.count; i++) {
+      if (P.getY(i) > -h / 2 + 0.001) continue;
+      const a = Math.atan2(P.getZ(i), P.getX(i));
+      const k = Math.round((a / (Math.PI * 2)) * seg * 2) % 2 ? 0.72 : 1.08;
+      P.setXYZ(i, P.getX(i) * k, P.getY(i) - (k > 1 ? 0.03 : -0.02), P.getZ(i) * k);
+    }
+    return g;
+  };
+  DECOR.pine = mergeParts([
+    { geo: cyl(0.035, 0.06, 0.45).translate(0, 0.22, 0), color: '#5a3e26', shade: [0.7, 1] },
+    { geo: skirt(0.34, 0.4, 7).translate(0, 0.36, 0), color: '#2b4f24', shade: [0.5, 1.0], jitter: 0.12 },
+    { geo: skirt(0.28, 0.34, 7).translate(0.01, 0.52, 0).rotateY(0.4), color: '#30572a', shade: [0.55, 1.05], jitter: 0.12 },
+    { geo: skirt(0.21, 0.3, 6).translate(0, 0.67, 0).rotateY(0.9), color: '#36622e', shade: [0.6, 1.1], jitter: 0.12 },
+    { geo: skirt(0.14, 0.24, 6).translate(0, 0.81, 0).rotateY(1.3), color: '#3c6a32', shade: [0.65, 1.12], jitter: 0.1 },
+    { geo: new T.ConeGeometry(0.07, 0.2, 6).translate(0, 0.95, 0), color: '#427434', shade: [0.7, 1.15] },
+  ]);
+  // feuillu : tronc tordu et houppier en boules
+  const leaves = [];
+  const blobs = [[0, 0.72, 0, 0.3], [0.2, 0.62, 0.08, 0.22], [-0.18, 0.64, -0.1, 0.23], [0.05, 0.86, -0.12, 0.2], [-0.08, 0.8, 0.16, 0.21], [0.16, 0.8, -0.14, 0.17]];
+  for (const [x, y, z, r] of blobs) leaves.push({ geo: ico(r, 1).translate(x, y, z), color: '#4f7a34', shade: [0.55, 1.12], jitter: 0.18 });
+  DECOR.oak = mergeParts([
+    { geo: cyl(0.04, 0.075, 0.55).translate(0, 0.27, 0), color: '#5e4430', shade: [0.65, 1] },
+    { geo: cyl(0.02, 0.035, 0.3).rotateZ(0.8).translate(0.12, 0.5, 0), color: '#5e4430' },
+    { geo: cyl(0.02, 0.035, 0.28).rotateZ(-0.9).translate(-0.11, 0.5, 0), color: '#5e4430' },
+    ...leaves,
+  ]);
+  // arbre mort du désert
+  DECOR.dead = mergeParts([
+    { geo: cyl(0.03, 0.06, 0.7).translate(0, 0.35, 0), color: '#6e5a48', shade: [0.7, 1] },
+    { geo: cyl(0.012, 0.025, 0.4).rotateZ(0.9).translate(0.15, 0.62, 0), color: '#6e5a48' },
+    { geo: cyl(0.012, 0.025, 0.35).rotateZ(-1.0).translate(-0.13, 0.55, 0.02), color: '#6e5a48' },
+    { geo: cyl(0.01, 0.02, 0.25).rotateX(0.9).translate(0, 0.72, 0.1), color: '#6e5a48' },
+  ]);
+  // cactus à bras
+  DECOR.cactus = mergeParts([
+    { geo: cyl(0.12, 0.14, 1, 8).translate(0, 0.5, 0), color: '#5f7a3a', shade: [0.7, 1.05] },
+    { geo: new T.SphereGeometry(0.12, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 1, 0), color: '#6c8a42' },
+    { geo: cyl(0.07, 0.08, 0.35, 7).rotateZ(Math.PI / 2).translate(0.2, 0.45, 0), color: '#5f7a3a' },
+    { geo: cyl(0.07, 0.07, 0.35, 7).translate(0.35, 0.62, 0), color: '#668240', shade: [0.85, 1.05] },
+    { geo: cyl(0.06, 0.07, 0.25, 7).rotateZ(Math.PI / 2).translate(-0.18, 0.62, 0), color: '#5f7a3a' },
+    { geo: cyl(0.06, 0.06, 0.28, 7).translate(-0.3, 0.75, 0), color: '#668240' },
+  ]);
+  // buisson
+  DECOR.bush = mergeParts([[0, 0.3, 0, 0.42], [0.3, 0.22, 0.1, 0.3], [-0.28, 0.2, -0.05, 0.32], [0.05, 0.25, 0.3, 0.28]]
+    .map(([x, y, z, r]) => ({ geo: ico(r, 1).translate(x, y, z), color: '#7a8a46', shade: [0.55, 1.1], jitter: 0.15 })));
+  // rochers
+  DECOR.rocks = [rockGeo(11), rockGeo(23), rockGeo(37)].map(g => mergeParts([{ geo: g, color: '#9a8c7c', shade: [0.6, 1.08], jitter: 0.1 }]));
+  // cristaux de sel
+  DECOR.salt = mergeParts([[0, 0, 0.6], [0.25, 0.15, 0.4], [-0.2, -0.1, 0.45]].map(([x, rz, h]) => ({ geo: new T.OctahedronGeometry(0.2, 0).scale(1, h / 0.2, 1).rotateZ(rz).translate(x, h * 0.8, 0), color: '#f2f4f4', shade: [0.85, 1.1] })));
+  // touffe d'herbe sèche (loin du joueur)
+  DECOR.tuft = grass.mesh.geometry;
+  return DECOR;
+}
 function buildDecor(rng, sites, nodeSpots) {
+  const M = decorModels();
   const dummy = new T.Object3D();
-  const blocked = (x, z) => sites.some(s => Math.hypot(s.x - x, s.z - z) < 55) || nodeSpots.some(n => Math.hypot(n.x - x, n.z - z) < 16);
+  const col = new T.Color();
+  const blocked = (x, z) => sites.some(s => Math.hypot(s.x - x, s.z - z) < 55) || nodeSpots.some(n => Math.hypot(n.x - x, n.z - z) < 16) || onRoad(x, z) < 4;
   const scatter = (count, accept, place) => {
     const out = [];
     for (let t = 0; t < count * 6 && out.length < count; t++) {
@@ -540,48 +662,77 @@ function buildDecor(rng, sites, nodeSpots) {
     }
     return out;
   };
-  const instanced = (geo, color, list) => {
-    const m = new T.InstancedMesh(geo, mat(color), Math.max(1, list.length));
-    m.castShadow = true; m.receiveShadow = true;
+  const foliage = new T.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85 });
+  const windy = (amp, minY) => addWind(new T.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85 }), amp, minY);
+  const instanced = (geo, material, list, shadow = true) => {
+    const m = new T.InstancedMesh(geo, material, Math.max(1, list.length));
+    m.castShadow = shadow; m.receiveShadow = true;
     list.forEach((d, i) => {
       dummy.position.set(d.x, d.y, d.z); dummy.rotation.set(d.rx || 0, d.ry || 0, d.rz || 0);
       dummy.scale.set(d.sx, d.sy, d.sz); dummy.updateMatrix(); m.setMatrixAt(i, dummy.matrix);
+      col.setRGB(1, 1, 1).multiplyScalar(d.tint || 1);
+      if (d.hue) col.lerp(d.hue, 0.25);
+      m.setColorAt(i, col);
     });
     m.count = list.length;
     worldGroup.add(m);
+    return m;
   };
-  // rochers (beaucoup en montagne)
-  const rocks = scatter(900, b => b === 'montagne' || rng() < 0.25, (x, z) => {
-    const big = biomeAt(x, z) === 'montagne' ? rng() < 0.4 : rng() < 0.1;
-    const s = big ? 2.5 + rng() * 4 : 0.3 + rng() * 1.3;
-    if (s > 1.2) addObstacle(x, z, s * 0.9);
-    return { x, y: heightAt(x, z) + s * 0.3, z, rx: rng() * 3, ry: rng() * 3, rz: rng() * 3, sx: s, sy: s * (0.6 + rng() * 0.5), sz: s };
+  const autumn = [lin('#c9a040'), lin('#b8622e'), lin('#9aaa40')];
+  // forêts : pins et feuillus, en bosquets
+  const groves = [];
+  for (let i = 0; i < 160; i++) {
+    const x = (rng() - 0.5) * WORLD, z = (rng() - 0.5) * WORLD;
+    if (biomeAt(x, z) === 'foret' || (biomeAt(x, z) === 'steppe' && rng() < 0.15) || (biomeAt(x, z) === 'montagne' && rng() < 0.3)) groves.push({ x, z, r: 15 + rng() * 40 });
+  }
+  const inGrove = (x, z) => groves.some(g => Math.hypot(g.x - x, g.z - z) < g.r);
+  const pines = [], oaks = [];
+  scatter(2200, (b, x, z) => (b === 'foret' && (inGrove(x, z) || rng() < 0.35)) || ((b === 'steppe' || b === 'montagne') && inGrove(x, z) && rng() < 0.5), (x, z) => {
+    const b = biomeAt(x, z);
+    const pine = b === 'montagne' || (b === 'foret' ? rng() < 0.55 : rng() < 0.3);
+    const h = pine ? 6 + rng() * 7 : 4.5 + rng() * 4;
+    addObstacle(x, z, 0.55);
+    const d = { x, y: heightAt(x, z) - 0.15, z, ry: rng() * 6, sx: h * (0.8 + rng() * 0.3), sy: h, sz: h * (0.8 + rng() * 0.3), tint: 0.82 + rng() * 0.3, hue: !pine && rng() < 0.12 ? pick(autumn) : null };
+    (pine ? pines : oaks).push(d);
+    return d;
   });
-  instanced(new T.DodecahedronGeometry(1, 0), '#8a7a68', rocks);
-  // arbres (forêts denses, steppe clairsemée)
-  const trees = scatter(1100, b => b === 'foret' || (b === 'steppe' && rng() < 0.08), (x, z) => {
-    const h = 4 + rng() * 4;
-    addObstacle(x, z, 0.5);
-    return { x, z, h, y: heightAt(x, z) };
-  });
-  instanced(new T.CylinderGeometry(0.25, 0.35, 1, 6), '#5a4026', trees.map(t => ({ x: t.x, y: t.y + t.h * 0.25, z: t.z, sx: 1, sy: t.h * 0.5, sz: 1 })));
-  instanced(new T.ConeGeometry(1.6, 1, 7), '#2f5a26', trees.map(t => ({ x: t.x, y: t.y + t.h * 0.62, z: t.z, ry: t.h, sx: 1 + t.h * 0.1, sy: t.h * 0.8, sz: 1 + t.h * 0.1 })));
-  // cactus
-  const cacti = scatter(300, b => b === 'desert', (x, z) => {
-    const h = 1.5 + rng() * 2.5;
-    return { x, y: heightAt(x, z) + h / 2, z, sx: 1, sy: h, sz: 1 };
-  });
-  instanced(new T.CylinderGeometry(0.25, 0.3, 1, 6), '#6f7d3c', cacti);
-  // buissons
-  const bushes = scatter(500, b => b === 'steppe' || (b === 'desert' && rng() < 0.3), (x, z) => {
-    const s = 0.5 + rng() * 0.8;
-    return { x, y: heightAt(x, z) + s * 0.3, z, ry: rng() * 3, sx: s * 1.3, sy: s * 0.7, sz: s * 1.3 };
-  });
-  instanced(new T.DodecahedronGeometry(1, 0), '#7d8a4a', bushes);
-  // cristaux de sel
-  const salt = scatter(300, b => b === 'sel', (x, z) => {
-    const s = 0.3 + rng() * 0.7;
-    return { x, y: heightAt(x, z) + s * 0.5, z, ry: rng() * 3, sx: s, sy: s * 1.5, sz: s };
-  });
-  instanced(new T.OctahedronGeometry(1, 0), '#f4f6f6', salt);
+  const pineMat = windy(0.05, 0.25); pineMat.side = T.DoubleSide;
+  instanced(M.pine, pineMat, pines);
+  instanced(M.oak, windy(0.07, 0.4), oaks);
+  // arbres morts, cactus
+  instanced(M.dead, foliage, scatter(140, b => b === 'desert' || b === 'sel', (x, z) => {
+    const h = 3 + rng() * 3;
+    return { x, y: heightAt(x, z) - 0.1, z, ry: rng() * 6, sx: h, sy: h, sz: h, tint: 0.9 + rng() * 0.2 };
+  }));
+  instanced(M.cactus, foliage, scatter(380, b => b === 'desert', (x, z) => {
+    const h = 1.6 + rng() * 2.6;
+    if (h > 3) addObstacle(x, z, 0.4);
+    return { x, y: heightAt(x, z) - 0.05, z, ry: rng() * 6, sx: h, sy: h, sz: h, tint: 0.85 + rng() * 0.25 };
+  }));
+  // rochers : gros blocs en montagne, cailloux partout
+  for (let v = 0; v < 3; v++) {
+    instanced(M.rocks[v], foliage, scatter(330, b => b === 'montagne' || rng() < 0.22, (x, z) => {
+      const b = biomeAt(x, z);
+      const big = b === 'montagne' ? rng() < 0.45 : rng() < 0.12;
+      const sz = big ? 2.2 + rng() * 4.5 : 0.25 + rng() * 1.1;
+      if (sz > 1.2) addObstacle(x, z, sz * 0.85);
+      const tint = b === 'desert' ? lin('#d8b080') : b === 'foret' ? lin('#7a8a5a') : b === 'sel' ? lin('#e0dcd0') : null;
+      return { x, y: heightAt(x, z) + sz * 0.12, z, ry: rng() * 6, rx: (rng() - 0.5) * 0.4, sx: sz * (0.8 + rng() * 0.5), sy: sz * (0.6 + rng() * 0.5), sz: sz * (0.8 + rng() * 0.5), tint: 0.8 + rng() * 0.3, hue: tint };
+    }));
+  }
+  // buissons, touffes
+  instanced(M.bush, windy(0.25, 0.1), scatter(900, b => b === 'steppe' || b === 'foret' || (b === 'desert' && rng() < 0.3), (x, z) => {
+    const sz = 0.6 + rng() * 1.1;
+    const b = biomeAt(x, z);
+    return { x, y: heightAt(x, z) - 0.1, z, ry: rng() * 6, sx: sz * 1.2, sy: sz * (0.8 + rng() * 0.4), sz: sz * 1.2, tint: 0.8 + rng() * 0.35, hue: b === 'desert' ? lin('#b8a060') : b === 'foret' ? lin('#4f7a34') : null };
+  }));
+  instanced(M.tuft, windy(0.5, 0), scatter(2600, b => b !== 'sel', (x, z) => {
+    const sz = 0.8 + rng() * 1.2, b = biomeAt(x, z);
+    return { x, y: heightAt(x, z) - 0.05, z, ry: rng() * 6, sx: sz, sy: sz, sz: sz, tint: 0.85 + rng() * 0.3, hue: b === 'foret' ? lin('#5a8a3a') : b === 'desert' ? lin('#d0b070') : null };
+  }), false);
+  // sel
+  instanced(M.salt, foliage, scatter(380, b => b === 'sel', (x, z) => {
+    const sz = 0.6 + rng() * 1.4;
+    return { x, y: heightAt(x, z) - 0.05, z, ry: rng() * 6, sx: sz, sy: sz, sz: sz, tint: 0.9 + rng() * 0.15 };
+  }));
 }

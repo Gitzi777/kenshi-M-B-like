@@ -2,40 +2,63 @@
 'use strict';
 
 // ---------- Modèle 3D d'un humain ----------
+const HAIR_COLORS = ['#2a1d14', '#3b2a1c', '#5a3a22', '#7a5530', '#1a1a1a', '#8a8070', '#a0522d'];
 function makeCharacter(look) {
   const root = new T.Group();
   const body = new T.Group();
   body.scale.setScalar(look.height || 1);
   root.add(body);
-  const own = c => new T.MeshStandardMaterial({ color: c, flatShading: true, roughness: 0.9 });
-  const mBody = own(look.body), mSkin = own(look.skin), mPants = own(look.pants || '#3b2f22');
-  const box = (w, h, d, m) => { const b = new T.Mesh(new T.BoxGeometry(w, h, d), m); b.castShadow = true; return b; };
-  const limb = (x, y, w, h, m) => {
+  const own = (c, r = 0.85) => new T.MeshStandardMaterial({ color: lin(c), roughness: r, map: TEX.grain });
+  const mBody = own(look.body), mSkin = own(look.skin, 0.7), mPants = own(look.pants || '#3b2f22');
+  const seed = Math.abs(Math.round(((look.skin || '').charCodeAt(2) || 7) * 31 + (look.height || 1) * 997 + (look.body || '').length * 13));
+  const mHair = own(look.hair || HAIR_COLORS[seed % HAIR_COLORS.length], 0.95);
+  const mBoot = own('#2e241a'), mBelt = own('#3a2c1e'), mDark = new T.MeshBasicMaterial({ color: '#15100c' });
+  const add = (geo, m, x, y, z, parent = body) => { const o = new T.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o; };
+  // membre articulé : la forme pend sous le pivot (épaule ou hanche)
+  const limb = (x, y, rTop, rBot, h, m) => {
     const pivot = new T.Group();
     pivot.position.set(x, y, 0);
-    const p = box(w, h, w, m);
-    p.position.y = -h / 2;
-    pivot.add(p);
+    add(new T.CylinderGeometry(rTop, rBot, h, 10), m, 0, -h / 2, 0, pivot);
     body.add(pivot);
     return pivot;
   };
-  const legL = limb(-0.14, 0.9, 0.19, 0.9, mPants);
-  const legR = limb(0.14, 0.9, 0.19, 0.9, mPants);
-  const torso = box(0.52, 0.66, 0.3, mBody);
-  torso.position.y = 1.24;
-  body.add(torso);
-  const tabard = box(0.36, 0.7, 0.02, own('#ffffff'));
-  tabard.position.set(0, 1.2, 0.16);
+  const legL = limb(-0.12, 0.92, 0.1, 0.075, 0.9, mPants);
+  const legR = limb(0.12, 0.92, 0.1, 0.075, 0.9, mPants);
+  for (const lg of [legL, legR]) add(new T.BoxGeometry(0.15, 0.18, 0.26), mBoot, 0, -0.84, 0.04, lg);
+  // buste en tonneau, épaules plus larges
+  const torso = add(new T.CylinderGeometry(0.27, 0.21, 0.66, 14), mBody, 0, 1.24, 0);
+  torso.scale.z = 0.62;
+  add(new T.CylinderGeometry(0.215, 0.215, 0.07, 8), mBelt, 0, 0.94, 0).scale.z = 0.66;
+  add(new T.BoxGeometry(0.07, 0.06, 0.02), own('#b8932a', 0.4), 0, 0.94, 0.14);
+  add(new T.CylinderGeometry(0.22, 0.24, 0.2, 8), mPants, 0, 0.86, 0).scale.z = 0.66;
+  add(new T.CylinderGeometry(0.06, 0.07, 0.1, 6), mSkin, 0, 1.6, 0);
+  const tabard = new T.Mesh(new T.BoxGeometry(0.34, 0.72, 0.02), own('#ffffff'));
+  tabard.position.set(0, 1.2, 0.15);
   tabard.visible = false;
   body.add(tabard);
-  const head = box(0.3, 0.32, 0.3, mSkin);
+  // tête : visage, yeux, nez, cheveux
+  const head = new T.Group();
   head.position.y = 1.76;
   body.add(head);
+  add(new T.SphereGeometry(0.16, 16, 12), mSkin, 0, 0, 0, head).scale.set(1, 1.12, 1.02);
+  add(new T.BoxGeometry(0.035, 0.035, 0.02), mDark, -0.06, 0.02, 0.15, head);
+  add(new T.BoxGeometry(0.035, 0.035, 0.02), mDark, 0.06, 0.02, 0.15, head);
+  add(new T.BoxGeometry(0.035, 0.06, 0.05), mSkin, 0, -0.03, 0.16, head);
+  const hair = new T.Group();
+  head.add(hair);
+  const style = seed % 4;
+  if (style !== 3) add(new T.SphereGeometry(0.168, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.55), mHair, 0, 0.015, -0.01, hair).scale.set(1.02, 1.14, 1.05);
+  if (style === 1) add(new T.BoxGeometry(0.2, 0.14, 0.12), mHair, 0, -0.06, -0.12, hair);
+  if (style === 2 || style === 3) add(new T.BoxGeometry(0.18, 0.1, 0.07), mHair, 0, -0.13, 0.11, hair); // barbe
   const headSlot = new T.Group();
   headSlot.position.y = 1.76;
   body.add(headSlot);
-  const armL = limb(-0.34, 1.52, 0.14, 0.62, mBody);
-  const armR = limb(0.34, 1.52, 0.14, 0.62, mBody);
+  // bras et mains
+  const armL = limb(-0.33, 1.5, 0.075, 0.06, 0.6, mBody);
+  const armR = limb(0.33, 1.5, 0.075, 0.06, 0.6, mBody);
+  add(new T.SphereGeometry(0.075, 8, 6), mBody, -0.33, 1.5, 0);
+  add(new T.SphereGeometry(0.075, 8, 6), mBody, 0.33, 1.5, 0);
+  for (const a of [armL, armR]) add(new T.IcosahedronGeometry(0.06, 1), mSkin, 0, -0.63, 0, a);
   const weaponSlot = new T.Group();
   weaponSlot.position.y = -0.6;
   armR.add(weaponSlot);
@@ -43,13 +66,13 @@ function makeCharacter(look) {
   bowSlot.position.y = -0.6;
   armL.add(bowSlot);
   const backSlot = new T.Group();
-  backSlot.position.set(0, 1.2, -0.2);
+  backSlot.position.set(0, 1.2, -0.17);
   body.add(backSlot);
   const hipSlot = new T.Group();
-  hipSlot.position.set(0.3, 0.98, 0.02);
+  hipSlot.position.set(0.26, 0.98, 0.02);
   hipSlot.rotation.x = Math.PI * 0.62;
   body.add(hipSlot);
-  return { root, body, legL, legR, armL, armR, torso, tabard, headSlot, weaponSlot, bowSlot, backSlot, hipSlot, mBody, mSkin, mPants, hurtMats: [mBody, mSkin] };
+  return { root, body, legL, legR, armL, armR, torso, tabard, head, hair, headSlot, weaponSlot, bowSlot, backSlot, hipSlot, mBody, mSkin, mPants, hurtMats: [mBody, mSkin] };
 }
 
 // ---------- Modèle 3D d'un animal (quadrupède) ----------
@@ -58,9 +81,13 @@ function makeAnimalModel(sp) {
   const body = new T.Group();
   body.scale.setScalar(sp.size);
   root.add(body);
-  const m = new T.MeshStandardMaterial({ color: sp.color, flatShading: true, roughness: 0.95 });
-  const dark = new T.MeshStandardMaterial({ color: '#1a1410', flatShading: true });
-  const box = (w, h, d, mm, x, y, z) => { const b = new T.Mesh(new T.BoxGeometry(w, h, d), mm); b.position.set(x, y, z); b.castShadow = true; return b; };
+  const m = new T.MeshStandardMaterial({ color: lin(sp.color), flatShading: true, roughness: 0.9, map: TEX.grain });
+  const dark = new T.MeshStandardMaterial({ color: lin('#1a1410'), flatShading: true });
+  // formes arrondies : ellipsoïdes plutôt que des cubes
+  const box = (w, h, d, mm, x, y, z) => {
+    const geo = w > 0.09 && h > 0.09 && d > 0.09 ? new T.IcosahedronGeometry(0.5, 1).scale(w * 1.12, h * 1.12, d * 1.12) : new T.BoxGeometry(w, h, d);
+    const b = new T.Mesh(geo, mm); b.position.set(x, y, z); b.castShadow = true; return b;
+  };
   const scorpion = sp.shape === 'scorpion';
   const torso = box(0.5, scorpion ? 0.3 : 0.42, scorpion ? 1.0 : 1.1, m, 0, scorpion ? 0.45 : 0.8, 0);
   body.add(torso);
@@ -79,7 +106,9 @@ function makeAnimalModel(sp) {
   const leg = (x, z) => {
     const pivot = new T.Group();
     pivot.position.set(x, legH, z);
-    pivot.add(box(0.11, legH, 0.11, m, 0, -legH / 2, 0));
+    const lg = new T.Mesh(new T.CylinderGeometry(0.07, 0.045, legH, 6), m);
+    lg.position.y = -legH / 2; lg.castShadow = true;
+    pivot.add(lg);
     body.add(pivot);
     return pivot;
   };
@@ -90,8 +119,13 @@ function makeAnimalModel(sp) {
 }
 
 function clearGroup(g) { while (g.children.length) g.remove(g.children[0]); }
-function part(w, h, d, color, x = 0, y = 0, z = 0) {
-  const m = new T.Mesh(new T.BoxGeometry(w, h, d), mat(color));
+const METAL = {};
+function metal(color) {
+  if (!METAL[color]) METAL[color] = new T.MeshStandardMaterial({ color: lin(color), roughness: 0.32, metalness: 0.55, flatShading: true });
+  return METAL[color];
+}
+function part(w, h, d, color, x = 0, y = 0, z = 0, mm) {
+  const m = new T.Mesh(new T.BoxGeometry(w, h, d), mm || mat(color));
   m.position.set(x, y, z);
   m.castShadow = true;
   return m;
@@ -103,13 +137,18 @@ function buildWeapon(id) {
   if (!it) return g;
   const L = it.len;
   switch (it.model) {
-    case 'blade': g.add(part(0.05, 0.05, L, it.color, 0, 0, L / 2 + 0.1), part(0.25, 0.05, 0.05, '#5a4630', 0, 0, 0.08)); break;
+    case 'blade': {
+      const bl = new T.Mesh(new T.CylinderGeometry(0.004, 0.035, L, 4).rotateX(Math.PI / 2).scale(1, 0.35, 1), metal(it.color));
+      bl.position.z = L / 2 + 0.13; bl.castShadow = true;
+      g.add(bl, part(0.24, 0.04, 0.05, '#7a6040', 0, 0, 0.1, metal('#8a7048')), part(0.04, 0.04, 0.16, '#3a2a1e', 0, 0, 0), part(0.06, 0.06, 0.06, '#8a7048', 0, 0, -0.09, metal('#8a7048')));
+      break;
+    }
     case 'staff': g.add(part(0.06, 0.06, L, it.color, 0, 0, L / 2 - 0.4)); break;
-    case 'mace': g.add(part(0.05, 0.05, L, '#5a4630', 0, 0, L / 2), part(0.17, 0.17, 0.22, it.color, 0, 0, L)); break;
-    case 'axe': g.add(part(0.05, 0.05, L, '#5a4630', 0, 0, L / 2), part(0.04, 0.32, 0.26, it.color, 0, 0.12, L - 0.1)); break;
+    case 'mace': { g.add(part(0.05, 0.05, L, '#5a4630', 0, 0, L / 2)); const h = new T.Mesh(new T.DodecahedronGeometry(0.12, 0), metal(it.color)); h.position.z = L; h.castShadow = true; g.add(h); break; }
+    case 'axe': g.add(part(0.05, 0.05, L, '#5a4630', 0, 0, L / 2), part(0.03, 0.3, 0.24, it.color, 0, 0.12, L - 0.1, metal(it.color))); break;
     case 'spear': {
       g.add(part(0.05, 0.05, L, '#6e5538', 0, 0, L / 2 - 0.5));
-      const tip = new T.Mesh(new T.ConeGeometry(0.06, 0.3, 4), mat(it.color));
+      const tip = new T.Mesh(new T.ConeGeometry(0.06, 0.3, 4), metal(it.color));
       tip.rotation.x = Math.PI / 2;
       tip.position.z = L - 0.35;
       g.add(tip);
@@ -132,12 +171,22 @@ function buildHelmet(id, fac) {
   if (!it) return g;
   const facColor = fac && fac.id !== 'player' ? fac.colors[1] : null;
   switch (it.model) {
-    case 'band': g.add(part(0.32, 0.08, 0.32, facColor || '#a01e1e', 0, 0.08, 0)); break;
-    case 'hood': g.add(part(0.36, 0.3, 0.36, facColor || '#6b5536', 0, 0.06, -0.03), part(0.42, 0.5, 0.06, facColor || '#6b5536', 0, -0.35, -0.2)); break;
-    case 'turban': g.add(part(0.36, 0.16, 0.36, facColor || '#ece2cc', 0, 0.14, 0), part(0.2, 0.08, 0.2, facColor || '#ece2cc', 0, 0.25, 0)); break;
-    case 'cap': g.add(part(0.34, 0.14, 0.34, it.color, 0, 0.13, 0)); break;
-    case 'helm': g.add(part(0.36, 0.2, 0.36, it.color, 0, 0.1, 0), part(0.04, 0.16, 0.04, it.color, 0, -0.04, 0.17)); break;
-    case 'greathelm': g.add(part(0.38, 0.4, 0.38, it.color, 0, 0.02, 0), part(0.26, 0.04, 0.02, '#111', 0, 0.04, 0.19)); break;
+    case 'band': { const t = new T.Mesh(new T.TorusGeometry(0.165, 0.03, 6, 16), mat(facColor || '#a01e1e')); t.rotation.x = Math.PI / 2; t.position.y = 0.07; g.add(t); break; }
+    case 'hood': {
+      const m = mat(facColor || '#6b5536');
+      const h = new T.Mesh(new T.SphereGeometry(0.2, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.62), m); h.position.set(0, 0.02, -0.02); h.scale.set(1, 1.15, 1.1); h.castShadow = true;
+      const c = new T.Mesh(new T.CylinderGeometry(0.2, 0.3, 0.5, 12, 1, true, Math.PI * 0.3, Math.PI * 1.4), m); c.position.set(0, -0.33, -0.04); c.castShadow = true;
+      m.side = T.DoubleSide;
+      g.add(h, c); break;
+    }
+    case 'turban': {
+      const m = mat(facColor || '#ece2cc');
+      for (let k = 0; k < 3; k++) { const t = new T.Mesh(new T.TorusGeometry(0.15 - k * 0.03, 0.05, 6, 16), m); t.rotation.x = Math.PI / 2; t.position.y = 0.08 + k * 0.06; t.castShadow = true; g.add(t); }
+      break;
+    }
+    case 'cap': { const d = new T.Mesh(new T.SphereGeometry(0.18, 12, 6, 0, Math.PI * 2, 0, Math.PI * 0.5), mat(it.color)); d.position.y = 0.03; d.castShadow = true; g.add(d); break; }
+    case 'helm': { const d = new T.Mesh(new T.SphereGeometry(0.19, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.55), metal(it.color)); d.position.y = 0.02; d.castShadow = true; g.add(d, part(0.04, 0.16, 0.04, it.color, 0, -0.04, 0.18, metal(it.color))); break; }
+    case 'greathelm': { const d = new T.Mesh(new T.CylinderGeometry(0.19, 0.2, 0.42, 10), metal(it.color)); d.position.y = 0.02; d.castShadow = true; g.add(d, part(0.26, 0.04, 0.02, '#111', 0, 0.04, 0.2)); break; }
   }
   return g;
 }
@@ -148,12 +197,13 @@ function dressUnit(u) {
   const c = u.c;
   const fac = u.faction === 'player' ? (state.allegiance ? F(state.allegiance) : null) : F(u.faction);
   const armor = IT(u.equip.armor);
-  c.mBody.color.set(armor && armor.color ? armor.color : u.look.body);
+  const bodyHex = armor && armor.color ? armor.color : u.look.body;
+  setLin(c.mBody.color, bodyHex);
+  if (c.hair) c.hair.visible = !u.equip.helmet || ['band'].includes(IT(u.equip.helmet) && IT(u.equip.helmet).model);
   const showTabard = fac && fac.outfit && fac.outfit.tabard && (u.faction !== 'player' || u.isPlayer || u.sworn);
   c.tabard.visible = !!showTabard;
   if (showTabard) {
-    const torso = '#' + c.mBody.color.getHexString();
-    c.tabard.material.color.set(fac.colors[0].toLowerCase() === torso ? fac.colors[1] : fac.colors[0]);
+    setLin(c.tabard.material.color, fac.colors[0].toLowerCase() === String(bodyHex).toLowerCase() ? fac.colors[1] : fac.colors[0]);
   }
   clearGroup(c.headSlot);
   if (u.equip.helmet) c.headSlot.add(buildHelmet(u.equip.helmet, fac));
@@ -188,7 +238,8 @@ const displayName = u => u.title ? `${u.title} ${u.name}` : u.name;
 function makeBar(color) {
   const cv = document.createElement('canvas');
   cv.width = 64; cv.height = 8;
-  const sp = new T.Sprite(new T.SpriteMaterial({ map: new T.CanvasTexture(cv), depthTest: false }));
+  const tx = new T.CanvasTexture(cv); tx.encoding = T.sRGBEncoding;
+  const sp = new T.Sprite(new T.SpriteMaterial({ map: tx, depthTest: false }));
   sp.scale.set(1, 0.13, 1);
   sp.renderOrder = 10;
   return { sp, cv, color };
@@ -218,7 +269,8 @@ function makeLabel(u) {
   g.strokeText(txt, 128, 20);
   g.fillStyle = isPlayerSide(u) ? '#b8f0a8' : u.rank ? '#ffd27a' : '#f2e6c8';
   g.fillText(txt, 128, 20);
-  const sp = new T.Sprite(new T.SpriteMaterial({ map: new T.CanvasTexture(cv), depthTest: false, transparent: true, sizeAttenuation: false }));
+  const tx = new T.CanvasTexture(cv); tx.encoding = T.sRGBEncoding;
+  const sp = new T.Sprite(new T.SpriteMaterial({ map: tx, depthTest: false, transparent: true, sizeAttenuation: false }));
   sp.scale.set(0.16, 0.025, 1);
   sp.position.y = u.animal ? 1.6 * u.species.size : 2.55 * (u.look.height || 1);
   sp.renderOrder = 11;

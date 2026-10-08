@@ -8,6 +8,14 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
 
 ## Contenu
 
+- **Graphismes** : rendu « film » (tons ACES), ciel en dégradé avec soleil, nuages, étoiles et cycle jour/nuit coloré
+  (aube, plein jour, coucher de soleil, nuit bleutée avec torche), brouillard d'horizon, ombres douces.
+  Sol aux biomes fondus (roche dans les pentes, neige sur les sommets), routes de terre entre les villes,
+  herbe dense et fleurs qui ondulent au vent, pins, feuillus, cactus, rochers irréguliers.
+  Murs de pierre crénelés, tours coiffées, maisons enduites avec soubassement, poutres, fenêtres et toits de tuiles.
+  Personnages plus détaillés (visage, cheveux, barbe, mains, bottes, ceinture), armes et casques métalliques.
+  Interface refaite (thème cuir et laiton). Réglage de qualité graphique, et allègement automatique si l'image saccade.
+
 - **Monde procédural** : chaque monde vient d'une graine. Relief, 5 biomes (désert, steppe, forêt, montagnes,
   marais salants), 3 ou 4 factions générées (nom, couleurs, drapeau, style de troupes), villes et camps.
 - **Ressources** : champs de céréales, camps de bûcherons, gisements de fer, plantations de coton et d'épices,
@@ -81,6 +89,7 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
 - `js/world.js` : génération du monde, relief, biomes, décor, drapeaux, exploitations
 - `js/towns.js` : villes, bâtiments, murs, cellules, coffres
 - `js/prison.js` : défaite, capture, prison, crochetage, port des corps, primes, soins
+- `js/gfx.js` : rendu, ciel, lumière du jour, textures, herbe, vent, routes
 - `js/fx.js` : sons, particules, tremblement, pause à l'impact
 - `js/units.js` : personnages, équipement, combat, IA
 - `js/strategy.js` : groupes, guerres, événements mondiaux

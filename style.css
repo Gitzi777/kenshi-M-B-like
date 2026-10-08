@@ -182,3 +182,57 @@ select { background: #2a2117; color: #fff; border: 1px solid #6b5536; border-rad
 .skillgrid .sk i { position: absolute; left: 0; bottom: 0; height: 2px; background: #c9a25a; border-radius: 1px; }
 .skillgrid .sk.cb i { background: #d76a4a; }
 .skillgrid .sk span { opacity: .8; }
+
+/* ---------- Refonte visuelle : thème cuir et laiton ---------- */
+:root {
+  --ink: #f3e8d4; --muted: #c2b293; --gold: #e6b865; --gold-2: #f5d38e; --red: #e07a64; --green: #9bd77f;
+  --panel: linear-gradient(180deg, rgba(38, 30, 22, .92), rgba(22, 17, 12, .94));
+  --edge: rgba(230, 184, 101, .35); --edge-soft: rgba(230, 184, 101, .16);
+}
+html, body { font-family: 'Inter', system-ui, sans-serif; color: var(--ink); background: #120e0a; }
+h1, h2, h3 { font-family: 'Cinzel', Georgia, serif; letter-spacing: .03em; color: var(--gold-2); text-shadow: 0 1px 0 rgba(0,0,0,.6); }
+h4 { color: var(--gold); text-transform: uppercase; letter-spacing: .08em; font-size: 11px; font-weight: 600; }
+small, .note { color: var(--muted); }
+#vignette { position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(10,6,2,.38) 100%); }
+.panel {
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,235,190,.08);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+button {
+  background: linear-gradient(180deg, #7a5e3a, #5a4228); color: #fff6e4; border: 1px solid rgba(245, 211, 142, .45);
+  border-radius: 7px; padding: 5px 11px; font-family: inherit; font-weight: 500;
+  box-shadow: 0 1px 0 rgba(255,240,200,.15) inset, 0 2px 6px rgba(0,0,0,.25); transition: filter .12s, transform .06s;
+}
+button:hover { filter: brightness(1.15); background: linear-gradient(180deg, #8a6c44, #664c2e); }
+button:active { transform: translateY(1px); }
+button.big { background: linear-gradient(180deg, #c27a34, #8e4f1e); border-color: rgba(255, 210, 140, .6); font-family: 'Cinzel', serif; letter-spacing: .05em; }
+button.alt { background: linear-gradient(180deg, #3f6ea8, #2a4e7c); }
+input, select { background: rgba(0,0,0,.35); border: 1px solid var(--edge-soft); border-radius: 6px; color: var(--ink); }
+#creation { width: 380px; padding: 16px 18px; }
+#creation .logo { font-size: 36px; text-align: center; margin-bottom: 4px;
+  background: linear-gradient(180deg, #ffe2a2, #d39a48); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.choice { border: 1px solid var(--edge-soft); border-radius: 8px; background: rgba(255,255,255,.02); transition: background .12s; }
+.choice:hover { background: rgba(255, 207, 122, .06); }
+.choice.sel { border-color: var(--gold); background: rgba(230, 184, 101, .12); box-shadow: 0 0 0 1px rgba(230,184,101,.25) inset; }
+#topbar { background: linear-gradient(180deg, rgba(14,10,6,.85), rgba(14,10,6,0)); padding: 8px 14px 18px; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+#player { border-radius: 12px; }
+.bar { background: rgba(0,0,0,.45); border-radius: 4px; overflow: hidden; box-shadow: inset 0 1px 2px rgba(0,0,0,.5); }
+.bar div { background: linear-gradient(180deg, #9be27c, #4fa83a); border-radius: 4px; }
+#minimap { border: 2px solid rgba(230, 184, 101, .55); box-shadow: 0 6px 20px rgba(0,0,0,.45); }
+#log div { background: linear-gradient(90deg, rgba(20,14,8,.78), rgba(20,14,8,.35)); border-radius: 6px; padding: 4px 9px; text-shadow: 0 1px 1px #000; }
+#controls { opacity: .85; }
+.tabs { border-bottom: 1px solid var(--edge-soft); }
+.tabs button { background: transparent; border-color: transparent; box-shadow: none; color: var(--muted); }
+.tabs button.on { background: rgba(230, 184, 101, .16); border-color: var(--edge); color: var(--gold-2); }
+.item { background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.04); border-radius: 8px; }
+.item:hover { background: rgba(255, 220, 150, .06); }
+#ordersBar span { background: rgba(20,14,8,.75); border: 1px solid var(--edge-soft); border-radius: 7px; padding: 4px 9px; }
+#ordersBar span.on { border-color: var(--gold); background: rgba(160, 96, 40, .75); }
+#worldmap { background: radial-gradient(ellipse at center, rgba(28,20,12,.97), rgba(10,7,4,.98)); }
+.mapside { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; }
+#mapCanvas { border: 2px solid var(--edge); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+.float { font-family: 'Inter', sans-serif; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,.9), 0 0 8px rgba(0,0,0,.4); }
+#ko h1 { font-family: 'Cinzel', serif; letter-spacing: .08em; }
+#prompt { background: rgba(18,12,8,.85); border: 1px solid var(--edge); border-radius: 10px; }
