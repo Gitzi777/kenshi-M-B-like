@@ -27,7 +27,11 @@ const nodeWorkers = n => squad().filter(a => a.assignedNode === nodeIndex(n));
 function nodeRate(n) {
   const base = RESOURCES[n.type].rate;
   if (n.owner === 'player') return base * 0.5 * nodeWorkers(n).length;
-  return n.owner ? base : 0;
+  if (!n.owner) return 0;
+  // la production dépend des ouvriers vivants (s'ils sont massacrés, elle s'effondre)
+  if (!state.people) return base;
+  const i = nodeIndex(n);
+  return base * Math.min(1, people().filter(p => p.alive && p.node === i && !p.party).length / 3);
 }
 
 // ---------- Journal du commerce ----------
@@ -141,10 +145,15 @@ function spawnNodeCivilians(n) {
   const fid = nodeFaction(n);
   if (!fid || fid === 'player' || !F(fid)) return;
   const R = RESOURCES[n.type];
-  for (let i = 0; i < 3; i++) {
+  const ni = nodeIndex(n);
+  const crew = state.people ? people().filter(p => p.alive && p.node === ni && !p.party) : [null, null, null];
+  for (const m of crew.slice(0, 3)) {
     const x = n.x + rand(-6, 6), z = n.z + rand(-6, 6);
-    n.civ.push(makeCivilian(fid, x, z, { type: 'work', x, z, yaw: rand(-3, 3), good: R.good }, 'Ouvrier'));
+    const u = makeCivilian(fid, x, z, { type: 'work', x, z, yaw: rand(-3, 3), good: R.good }, 'Ouvrier');
+    if (m) { u.pid = m.id; u.name = m.name; }
+    n.civ.push(u);
   }
+  if (!crew.length) return;
   const s = settlementByName(n.owner);
   if (s && d2(s, n) < 320) {
     const g = gatePos(s, 4);
@@ -165,15 +174,22 @@ function spawnTownCivilians(s) {
     const kx = v.kx != null ? v.kx : v.x, kz = v.kz != null ? v.kz : v.z;
     const u = makeCivilian(s.faction, kx, kz, { type: 'stall', x: kx, z: kz, yaw: v.yaw, town: s.name, timer: 999 }, SERVICE_KEEPER[v.type]);
     u.name = v.keeper;
+    if (v.owner) u.pid = v.owner;
     s.civilians.push(u);
   }
   for (const st of s.stalls) {
     s.civilians.push(makeCivilian(s.faction, st.x, st.z, { type: 'stall', x: st.x, z: st.z, yaw: st.yaw, town: s.name, timer: rand(2, 8) }, 'Marchand'));
   }
-  for (let i = 0; i < 5; i++) {
+  // les habitants visibles sont les vraies personnes présentes en ville
+  const locals = state.people ? people().filter(p => p.alive && !p.party && p.loc === s.name && !p.shop && p.job !== 'soldat' && p.node == null) : [];
+  const n = state.people ? Math.min(7, locals.length) : 5;
+  for (let i = 0; i < n; i++) {
     const a = rand(0, Math.PI * 2), r = rand(6, s.r - 8);
     const home = s.homes && s.homes.length ? s.homes[i % s.homes.length] : null;
-    s.civilians.push(makeCivilian(s.faction, s.x + Math.cos(a) * r, s.z + Math.sin(a) * r, { type: 'wander', town: s.name, wait: rand(0, 3), home }, 'Habitant'));
+    const m = locals[i];
+    const u = makeCivilian(s.faction, s.x + Math.cos(a) * r, s.z + Math.sin(a) * r, { type: 'wander', town: s.name, wait: rand(0, 3), home }, m ? JOBS[m.job] : 'Habitant');
+    if (m) { u.pid = m.id; u.name = m.name; }
+    s.civilians.push(u);
   }
 }
 function despawnTownCivilians(s) {

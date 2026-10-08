@@ -511,6 +511,15 @@ function damage(o, by, amount, dir, ranged) {
   } else if (!o.isPlayer && (!o.target || Math.random() < 0.5) && hostile(o, by)) o.target = by;
   if (o.party) o.party.aggro = true;
   if (o.civil) { o.flee = 6; o.fleeFrom = { x: by.pos.x, z: by.pos.z }; }
+  // les soldats proches défendent les leurs (civils, compagnons d'armes)
+  if (!isPlayerSide(o) && !o.animal && by && by.faction !== o.faction) {
+    for (const d of units) {
+      if (d === o || d.faction !== o.faction || d.civil || !alive(d) || d.target === by || d2(d.pos, o.pos) > 35) continue;
+      if (!hostile(d, by)) d.angryAt = by;
+      if (!d.target || Math.random() < 0.5) d.target = by;
+      if (d.party) d.party.aggro = true;
+    }
+  }
   if (isPlayerSide(by)) gainXp(by, 2);
   if (o.hp <= 0) kill(o, by);
 }
@@ -546,7 +555,7 @@ function kill(o, by) {
   if (isPlayerSide(o)) { downUnit(o); return; }
   // les humains tombent souvent K.O. au lieu de mourir (on peut les fouiller, les porter, les livrer)
   const koChance = by && isFists(by) ? 1 : 0.5;
-  if (!o.animal && !o.civil && o.rank !== 'ruler' && !o.down && !o.noKO && Math.random() < koChance) { npcDown(o); return; }
+  if (!o.animal && !o.civil && o.rank !== 'ruler' && !o.down && !o.noKO && Math.random() < koChance) { npcDown(o, by); return; }
   sfx('death', o.pos, 0.7);
   if (by && (by.isPlayer || o.isPlayer)) impact(0.3, 0.12);
   o.dead = true;
@@ -554,7 +563,11 @@ function kill(o, by) {
   if (o.bar) o.bar.sp.visible = false;
   if (o.label) o.label.visible = false;
   o.loot = makeLoot(o);
-  if (o.guardOf) o.guardOf.garrison = Math.max(0, o.guardOf.garrison - 1);
+  if (o.guardOf && !o.koCounted) o.guardOf.garrison = Math.max(0, o.guardOf.garrison - 1);
+  if (o.pid) personDies(personOf(o), by);
+  if (by) gainFame(by, o, false);
+  if (o.civil && o.task && o.task.type === 'work' && typeof addChronicle === 'function' && by && F(by.faction) && F(by.faction).bandit && Math.random() < 0.3)
+    addChronicle(`${theF(F(by.faction), true)} ${vb(F(by.faction), 'a', 'ont')} massacré des ouvriers ${F(o.faction) ? F(o.faction).of : ''} ${placeName(o.pos)}.`, '🩸');
   if (o.rank === 'general' && typeof generalFell === 'function') generalFell(o, by);
   if (o.rank === 'ruler' && typeof rulerFell === 'function') rulerFell(o, by);
   if (by && isPlayerSide(by)) {
@@ -568,8 +581,11 @@ function kill(o, by) {
   }
 }
 
-function npcDown(o) {
+function npcDown(o, by) {
   o.down = rand(40, 70); o.hp = 0;
+  if (by) gainFame(by, o, true);
+  // un garde assommé ne compte plus dans la garnison tant qu'il ne s'est pas relevé
+  if (o.guardOf && !o.koCounted) { o.koCounted = true; o.guardOf.garrison = Math.max(0, o.guardOf.garrison - 1); }
   o.atk = null; o.block = null; o.draw = -1; o.target = null;
   if (o.bar) o.bar.sp.visible = false;
   o.loot = makeLoot(o);
@@ -581,6 +597,7 @@ function npcDown(o) {
 }
 function npcWake(o) {
   o.down = 0;
+  if (o.koCounted && o.guardOf) { o.koCounted = false; o.guardOf.garrison++; }
   o.hp = Math.round(o.maxHp * 0.25);
   // ce qu'on lui a pris ne revient pas
   if (o.loot) {
@@ -858,7 +875,9 @@ function nearestHostile(u, range, from = u.pos) {
   const f = F(u.faction);
   const avoidTowns = (f && f.bandit && !(u.party && u.party.kind === 'army') && !u.guardOf) || u.animal;
   for (const o of units) {
-    if (!alive(o) || o === u || (o.civil && !u.animal) || o.jailed || !hostile(u, o)) continue;
+    // les civils hors des villes (ouvriers, porteurs, voyageurs) sont des proies pour les bandits et les ennemis
+    if (!alive(o) || o === u || o.jailed || !hostile(u, o)) continue;
+    if (o.civil && !u.animal && (isPlayerSide(u) || settlementAt(o.pos, 2))) continue;
     if (avoidTowns) { const st = settlementAt(o.pos, 2); if (st && st.type !== 'repaire' && st.faction !== u.faction) continue; }
     const d = d2(from, o.pos);
     if (d < bd) { bd = d; best = o; }

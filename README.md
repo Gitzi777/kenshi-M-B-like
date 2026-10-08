@@ -43,7 +43,16 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
 - **Compétences façon Kenshi** : attaque, défense, poings, tir, force, endurance, athlétisme, soins, artisanat…
   Elles montent en s'en servant jusqu'à 100, plus vite face à plus fort que soi.
 - **Escouade autonome** : les membres se soignent et relèvent les blessés tout seuls quand le danger est passé.
-- **Sons** : coups, parades, flèches, pas, vent, oiseaux, grillons, rumeur des villes (synthétisés, aucun fichier).
+- **Sons** : coups, parades, flèches, pas, oiseaux, grillons, rumeur des villes (synthétisés, aucun fichier).
+- **Habitants persistants** : chaque PNJ a un nom, un métier, de l'argent, des compétences et du prestige, même hors de vue.
+  Ils travaillent aux exploitations, tiennent et rachètent des boutiques, s'enrôlent dans la garnison, voyagent de ville en ville,
+  se vendent comme mercenaires à la taverne, ou tournent brigands quand la misère frappe (onglet « Habitants » de l'auberge).
+- **Prestige et grades** : les PNJ progressent en combattant (recrue, vétéran, sergent, champion ; pillard, lieutenant,
+  seigneur de guerre). Les plus redoutés reçoivent un surnom, fondent leur propre bande, deviennent généraux.
+- **Ouvriers et porteurs vulnérables** : bandits et ennemis les attaquent hors des villes, les soldats proches les défendent,
+  et une exploitation sans ouvriers ne produit plus.
+- **Garnisons réalistes** : pas de renforts pendant une attaque, les gardes assommés comptent comme perdus, la garnison
+  se reconstitue avec les habitants qui s'enrôlent.
 - **Monde plus stable** : guerres rares (une à la fois au plus), la paix revient.
 - **Équipement, fouille des corps, réputation, serment, sauvegarde.**
 
@@ -77,5 +86,6 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
 - `js/strategy.js` : groupes, guerres, événements mondiaux
 - `js/economy.js` : stocks, prix, caravanes marchandes, civils
 - `js/wildlife.js` : animaux sauvages, nuit, tempêtes de sable
+- `js/people.js` : habitants persistants, métiers, prestige, grades, mercenaires, voyages
 - `js/ui.js` : interface, carte, inventaire, réglages, sauvegarde
 - `js/main.js` : contrôles, caméra, boucle de jeu

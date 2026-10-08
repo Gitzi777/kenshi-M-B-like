@@ -224,7 +224,7 @@ function renderPanel() {
 // ---------- Bâtiments des villes ----------
 const SERVICE_TABS = {
   marche: [['marche', 'Marché']],
-  auberge: [['taverne', 'Taverne']],
+  auberge: [['taverne', 'Taverne'], ['habitants', 'Habitants']],
   esclaves: [['esclaves', 'Esclaves']],
   bazar: [['bazar', 'Bazar']],
   prison: [['prison', 'Prison']],
@@ -284,6 +284,19 @@ function renderTown() {
         <button data-sellitem="${i}">Vendre ${itemSellPrice(id)} 💰</button></div>`).join('') : '<small>Rien à vendre.</small>'}</div>`;
   } else if (state.townTab === 'artisanat') {
     body = craftHTML(SERVICE_STATION[v.type], 5);
+  } else if (state.townTab === 'habitants') {
+    body = peopleHTML(s);
+  } else if (state.townTab === 'taverne' && state.people) {
+    const full = squad().length + 1 >= MAX_SQUAD;
+    const rumors = state.chronicle.slice(-3).reverse().map(c => `<li>« ${esc(c.text)} »</li>`).join('');
+    const mercs = tavernMercs(s);
+    body = `<div class="note">Ces mercenaires vivent vraiment ici : ils voyagent de ville en ville, et ceux qui ne trouvent pas d'employeur finissent parfois brigands.</div>
+      <div class="items">${mercs.map(m => `<div class="item"><span><b>${esc(personName(m))}</b>
+        <small>Attaque ${Math.floor(sk(m, 'attaque'))} · Défense ${Math.floor(sk(m, 'defense'))} · Endurance ${Math.floor(sk(m, 'endurance'))}${m.kills ? ` · ${m.kills} victoires` : ''}${Object.entries(m.skills).filter(([k, v]) => CRAFT_SKILLS[k] && v >= 10).map(([k, v]) => ` · ${SKILLS[k]} ${Math.floor(v)}`).join('')}</small></span>
+        <button data-merc="${m.id}" ${state.money < mercPrice(m) || full ? 'disabled' : ''}>Engager (${mercPrice(m)} 💰)</button></div>`).join('') || '<small>Aucun mercenaire en ville en ce moment. Repasse plus tard ou essaie une autre ville.</small>'}</div>
+      <button data-rest ${state.money < 10 ? 'disabled' : ''}>Louer des lits jusqu'au matin, tout le monde soigné (10 💰)</button>
+      <h4>Figures redoutées</h4><ul class="rumors">${notables(5).map(p => `<li>${esc(personName(p))} — ${esc(rankLabel(p))}${F(p.faction) ? ' ' + esc(F(p.faction).of) : ''}, ${p.kills} victimes</li>`).join('') || '<li>Personne ne fait encore parler de lui.</li>'}</ul>
+      <h4>On raconte que…</h4><ul class="rumors">${rumors || '<li>Rien de neuf.</li>'}</ul>`;
   } else if (state.townTab === 'taverne') {
     const cost = recruitCost();
     const full = squad().length + 1 >= MAX_SQUAD;
@@ -453,7 +466,8 @@ $('town').addEventListener('click', e => {
   } else if (d.sellitem) {
     const id = player.inv[Number(d.sellitem)];
     if (id) { player.inv.splice(Number(d.sellitem), 1); state.money += itemSellPrice(id); trade(s); }
-  } else if (d.recruit != null && 'recruit' in d) recruit(s, false, Number(d.recruit));
+  } else if (d.merc) hireMerc(Number(d.merc));
+  else if (d.recruit != null && 'recruit' in d) recruit(s, false, Number(d.recruit));
   else if ('recruitvet' in d) recruit(s, true);
   else if (d.buyslave != null || 'sellcarried' in d || d.sellmember) slaveMarketClick(d, s);
   else if (d.bz) {
@@ -510,6 +524,38 @@ function recruit(s, veteran, idx) {
   u.bar.color = '#6fcf5a'; drawBar(u);
   dressUnit(u);
   logMsg(`${u.name} rejoint ton escouade !`);
+}
+
+function hireMerc(id) {
+  const m = personById(id);
+  if (!m || !m.alive || squad().length + 1 >= MAX_SQUAD || state.money < mercPrice(m)) return;
+  state.money -= mercPrice(m);
+  m.wealth += mercPrice(m); m.job = 'compagnon'; m.loc = null; m.faction = 'player';
+  const tier = sk(m, 'attaque');
+  const u = makeUnit({
+    faction: 'player', x: player.pos.x + rand(-2, 2), z: player.pos.z + rand(-2, 2), name: m.name,
+    maxHp: 75, str: 2 + Math.floor(sk(m, 'force') / 15), speed: 4.7, blockChance: 0.3, blockSkill: 0.5, arrows: 20,
+    equip: tier > 30 ? { weapon: 'sabre', armor: 'cuir', helmet: 'casque_cuir' } : { weapon: 'machette', armor: 'tunique', helmet: 'capuche' },
+    look: { body: player.look.body, skin: pick(SKIN_COLORS), pants: '#3b2f22', height: rand(0.93, 1.08) },
+  });
+  bindUnit(u, m);
+  u.title = '';
+  u.bar.color = '#6fcf5a'; drawBar(u);
+  dressUnit(u);
+  logMsg(`${u.name} rejoint ton escouade ! (${mercPrice(m)} 💰)`);
+}
+// les habitants d'une ville : métiers, richesse, prestige
+function peopleHTML(s) {
+  if (!state.people) return '<p class="note">Personne à présenter.</p>';
+  const here = people().filter(p => p.alive && !p.party && p.loc === s.name);
+  const order = ['marchand', 'artisan', 'soldat', 'mercenaire', 'ouvrier', 'habitant', 'bandit'];
+  here.sort((a, b) => order.indexOf(a.job) - order.indexOf(b.job) || b.fame - a.fame);
+  const shopName = p => { const sv = shopService(p); return sv && sv.v ? ` · tient ${esc(sv.v.name)}` : ''; };
+  const node = p => p.node != null && state.nodes[p.node] ? ` · ${esc(RESOURCES[state.nodes[p.node].type].name)}` : '';
+  const best = p => { const k = Object.keys(SKILLS).sort((a, b) => (p.skills[b] || 0) - (p.skills[a] || 0))[0]; return `${SKILLS[k]} ${Math.floor(p.skills[k] || 0)}`; };
+  return `<div class="note">${here.length} habitants notables. Ils travaillent, s'enrichissent, s'enrôlent, voyagent ou tournent mal selon leur vie.</div>
+    <div class="items">${here.map(p => `<div class="item"><span><b>${esc(personName(p))}</b>
+      <small>${esc(p.job === 'soldat' ? rankLabel(p) : JOBS[p.job])}${shopName(p)}${node(p)} · 💰 ${Math.round(p.wealth)} · ${best(p)}${p.fame >= 1 ? ` · prestige ${Math.floor(p.fame)}` : ''}</small></span></div>`).join('')}</div>`;
 }
 
 function swearAllegiance(fid) {
@@ -905,6 +951,7 @@ function renderSettings() {
       <label class="row"><input id="sInv" type="checkbox" ${settings.invertY ? 'checked' : ''}> Inverser l'axe vertical</label>
       <label class="row"><input id="sSmooth" type="checkbox" ${settings.smooth ? 'checked' : ''}> Caméra lissée</label>
       <label class="row">Volume <input id="sVol" type="range" min="0" max="1" step="0.05" value="${settings.volume}"></label>
+      <label class="row"><input id="sAmb" type="checkbox" ${settings.ambience !== false ? 'checked' : ''}> Sons d'ambiance (oiseaux, grillons, rumeur des villes)</label>
       <label class="row"><input id="sHit" type="checkbox" ${settings.hitNeutrals ? 'checked' : ''}> Frapper les neutres et alliés (sinon tes coups et flèches ne touchent que tes ennemis)</label>
       <label class="row"><input id="sTank" type="checkbox" ${settings.tank !== false ? 'checked' : ''}> Vue suivie : Q et D font tourner le personnage, la caméra reste derrière lui (conseillé sur Mac)</label>
       <label class="row">Caméra (touche V pour changer)
@@ -925,6 +972,7 @@ $('settings').addEventListener('input', e => {
   if (e.target.id === 'sTank') settings.tank = e.target.checked;
   if (e.target.id === 'sHit') settings.hitNeutrals = e.target.checked;
   if (e.target.id === 'sVol') setVolume(Number(e.target.value));
+  if (e.target.id === 'sAmb') settings.ambience = e.target.checked;
   if (e.target.id === 'sCam') setCamMode(e.target.value);
   saveSettings();
 });
@@ -934,7 +982,7 @@ $('settings').addEventListener('click', e => { if (e.target.closest('[data-close
 function unitSave(u) {
   return { name: u.name, look: u.look, equip: u.equip, inv: u.inv || [], hp: Math.max(1, Math.round(u.hp)), maxHp: u.maxHp,
     str: u.str, agi: u.agi, speed: u.speedBase, level: u.level, xp: u.xp, x: u.pos.x, z: u.pos.z, arrows: u.arrows,
-    archer: !!u.archer, sworn: !!u.sworn, stats: u.stats, node: u.assignedNode, skills: u.skills, jailed: u.jailed, fugitive: u.fugitive, oldId: u.id };
+    archer: !!u.archer, sworn: !!u.sworn, pid: u.pid || null, stats: u.stats, node: u.assignedNode, skills: u.skills, jailed: u.jailed, fugitive: u.fugitive, oldId: u.id };
 }
 function saveGame(silent) {
   if (state.mode !== 'play' || state.ko > 0) return false;
@@ -948,7 +996,9 @@ function saveGame(silent) {
       garrison: s.garrison, pop: s.pop, stock: s.stock, hist: s.hist })),
     nodes: state.nodes.map(n => ({ owner: n.owner, stock: n.stock, disabled: n.disabled, workshop: !!n.workshop })),
     parties: state.parties.map(p => ({ faction: p.faction, kind: p.kind, x: p.x, z: p.z, troops: partyTroops(p), dest: p.dest,
-      home: p.home, target: p.target, cargo: p.cargo || null })),
+      home: p.home, target: p.target, cargo: p.cargo || null, members: p.mat ? p.units.filter(u => !u.dead).map(u => u.pid || null) : p.members || null,
+      general: p.general || null, name: p.name })),
+    people: state.people || null,
     chronicle: state.chronicle, trades: state.trades, saved: Date.now(), jail: state.jail, tollPaid: state.tollPaid, tollAngry: state.tollAngry,
   };
   try {
@@ -991,7 +1041,12 @@ function loadGame(data) {
     if (!F(pd.faction) || !pd.troops.length) continue;
     const p = makeParty(pd.faction, pd.kind, pd.x, pd.z, pd.troops, { dest: pd.dest, home: pd.home, target: pd.target });
     p.cargo = pd.cargo;
+    if (pd.members) p.members = pd.members;
+    if (pd.general) p.general = pd.general;
+    if (pd.name) p.name = pd.name;
   }
+  state.people = data.people || null;
+  if (state.people) { indexPeople(); relinkShops(); } else generatePeople();
   if (player) removeUnit(player);
   player = createPlayer(data.player);
   player.inv = data.player.inv || [];
@@ -999,6 +1054,7 @@ function loadGame(data) {
     const u = makeUnit({ faction: 'player', x: m.x, z: m.z, name: m.name, look: m.look, equip: m.equip, hp: m.hp, maxHp: m.maxHp,
       str: m.str, agi: m.agi, speed: m.speed, level: m.level, xp: m.xp, arrows: m.arrows, blockChance: 0.3, skills: m.skills });
     u.archer = m.archer; u.sworn = m.sworn; u.assignedNode = m.node != null ? m.node : null;
+    if (m.pid && personById(m.pid)) { u.pid = m.pid; personById(m.pid).skills = u.skills; }
     dressUnit(u);
   }
   PLAYER_FLAG.colors[0] = player.look.body;

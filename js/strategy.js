@@ -25,7 +25,7 @@ function addChronicle(text, icon = '📜') {
 // ---------- Groupes (patrouilles, armées, caravanes, bandes) ----------
 const partyPower = p => partyTroops(p).reduce((a, t) => a + (TROOP_POWER[t] || 1), 0);
 function partyTroops(p) { return p.mat ? p.units.filter(u => !u.dead).map(u => u.troop) : p.troops; }
-const PARTY_LABEL = { patrol: 'Patrouille', army: 'Armée', caravan: 'Caravane', bandits: 'Bande' };
+const PARTY_LABEL = { patrol: 'Patrouille', army: 'Armée', caravan: 'Caravane', bandits: 'Bande', travel: 'Voyageurs' };
 const partyName = p => `${PARTY_LABEL[p.kind]} ${F(p.faction).of}`;
 
 function rollTroops(fid, n, kind) {
@@ -67,16 +67,25 @@ const placeName = p => {
 
 function materialize(p) {
   p.mat = true;
+  const ms = partyMembers(p);
   p.units = p.troops.map((troop, i) => {
     const a = i * 2.4, r = i ? 1.5 + i * 0.5 : 0;
-    const extra = { party: p, banner: i === 0 && p.kind !== 'bandits' };
-    if (i === 0 && troop === 'general' && p.general) Object.assign(extra, { name: p.general, title: 'Général', rank: 'general' });
-    else if (i === 0 && p.kind === 'patrol') Object.assign(extra, { name: p.captain || (p.captain = genPerson()), title: 'Capitaine', rank: 'captain' });
-    else if (i === 0 && p.kind === 'caravan') Object.assign(extra, { name: p.captain || (p.captain = genPerson()), title: 'Maître de caravane', rank: 'captain' });
-    return makeTroop(p.faction, troop, p.x + Math.cos(a) * r, p.z + Math.sin(a) * r, extra);
+    const extra = { party: p, banner: i === 0 && p.kind !== 'bandits' && p.kind !== 'travel' };
+    let lead = null;
+    if (i === 0 && troop === 'general' && p.general) { Object.assign(extra, { rank: 'general' }); lead = 'Général'; }
+    else if (i === 0 && p.kind === 'patrol') { Object.assign(extra, { rank: 'captain' }); lead = 'Capitaine'; }
+    else if (i === 0 && p.kind === 'caravan') { Object.assign(extra, { rank: 'captain' }); lead = 'Maître de caravane'; }
+    if (troop === 'voyageur') Object.assign(extra, { equip: { weapon: pick(['baton', null, 'dague']), armor: 'tunique', helmet: pick(['capuche', 'turban', null]) }, title: 'Voyageur' });
+    const u = makeTroop(p.faction, troop, p.x + Math.cos(a) * r, p.z + Math.sin(a) * r, extra);
+    const m = personById(ms[i]);
+    bindUnit(u, m);
+    if (lead && !(m && m.epithet)) u.title = lead;
+    if (i === 0 && m) { if (p.kind === 'army') p.general = m.name; else p.captain = m.name; }
+    return u;
   });
 }
 function dematerialize(p) {
+  p.members = p.units.filter(u => !u.dead).map(u => u.pid || null);
   p.troops = p.units.filter(u => !u.dead).map(u => u.troop);
   for (const u of p.units) if (!u.dead) removeUnit(u); else u.party = null;
   p.units = [];
@@ -152,9 +161,11 @@ function promoteGenerals() {
     ensureHierarchy(f);
     const active = f.generals.filter(g => g.status !== 'mort');
     if (active.length < 2 && Math.random() < 0.5) {
-      const name = genPerson();
-      f.generals = f.generals.filter(g => g.status !== 'mort').concat({ name, status: 'libre' });
-      addChronicle(`${name} est promu général ${f.of}.`, '🎖');
+      // le soldat le plus prestigieux de la faction devient général
+      const best = people().filter(m => m.alive && m.job === 'soldat' && m.faction === f.id && !m.party && m.fame >= 8).sort((a, b) => b.fame - a.fame)[0];
+      const name = best ? best.name : genPerson();
+      f.generals = f.generals.filter(g => g.status !== 'mort').concat({ name, status: 'libre', pid: best ? best.id : null });
+      addChronicle(best ? `${personName(best)}, ${rankLabel(best).toLowerCase()} aux ${Math.round(best.kills)} victoires, est promu général ${f.of}.` : `${name} est promu général ${f.of}.`, '🎖');
     }
   }
 }
@@ -177,7 +188,10 @@ function raiseRaid(fid) {
   const g = gatePos(from, -6);
   const p = makeParty(fid, 'army', g.x, g.z, ['chef', ...rollTroops(fid, randInt(8, 12), 'bandits')], { target: best.name, home: from.name });
   p.dest = { x: best.x, z: best.z };
-  p.general = genPerson();
+  partyMembers(p);
+  const chief = people().filter(m => m.alive && m.job === 'bandit' && m.faction === fid && m.fame >= 10 && !m.party).sort((a, b) => b.fame - a.fame)[0];
+  if (chief) { personDies(personById(p.members[0])); p.members[0] = chief.id; chief.party = p.id; chief.loc = null; }
+  p.general = personName(personById(p.members[0]));
   addChronicle(`${theF(f, true)} ${vb(f, 'lance', 'lancent')} un raid sur ${best.name}, mené par ${p.general} !`, '🐺');
   return p;
 }
@@ -197,6 +211,10 @@ function raiseArmy(fid) {
   p.dest = { x: best.x, z: best.z };
   p.general = gen.name;
   gen.status = 'armée';
+  partyMembers(p);
+  const gp = gen.pid && personById(gen.pid);
+  if (gp && gp.alive) { personDies(personById(p.members[0])); p.members[0] = gp.id; gp.party = p.id; gp.loc = null; }
+  else { const m = personById(p.members[0]); m.name = gen.name; m.fame = Math.max(m.fame, 20); }
   addChronicle(`Le général ${gen.name} lève une armée ${F(fid).of} à ${from.name} et marche sur ${best.name}.`, '📯');
   return p;
 }
@@ -206,7 +224,11 @@ function autoBattle(a, b) {
   const pa = partyPower(a) * rand(0.75, 1.25), pb = partyPower(b) * rand(0.75, 1.25);
   const [win, lose, pw, pl] = pa >= pb ? [a, b, pa, pb] : [b, a, pb, pa];
   const losses = Math.round(win.troops.length * clamp(pl / pw, 0.1, 0.9) * 0.6);
+  membersDie(win, losses);
   win.troops.splice(0, losses);
+  membersDie(lose, lose.troops.length);
+  // les survivants gagnent en prestige
+  for (const id of (win.members || []).slice(0, 3)) { const m = personById(id); if (m) { m.kills += 1; addFame(m, rand(0.5, 2)); } }
   const where = placeName(lose);
   if (lose.kind === 'caravan' && F(win.faction).bandit) addChronicle(`${theF(F(win.faction), true)} ${vb(F(win.faction), 'a', 'ont')} pillé une caravane ${F(lose.faction).of} ${where}.`, '🐺');
   else if (lose.kind === 'army' || win.kind === 'army') addChronicle(`Bataille ${where} : ${theF(F(win.faction))} ${vb(F(win.faction), 'écrase', 'écrasent')} l'${lose.kind === 'army' ? 'armée' : 'escorte'} ${F(lose.faction).of}.`, '⚔');
@@ -222,11 +244,18 @@ function siege(p, s) {
   if (atk > def) {
     const survivors = Math.max(2, Math.round(partyTroops(p).length * 0.6));
     if (p.general) releaseGeneral(p, false);
+    partyMembers(p);
+    membersDie(p, p.troops.length - survivors);
+    const settlers = p;
     removeParty(p);
     captureSettlement(s, p.faction, survivors);
+    membersSettle(settlers, s, F(p.faction).bandit ? 'bandit' : 'soldat');
   } else {
-    s.garrison = Math.max(1, Math.round(s.garrison - atk / 1.5));
+    const lost = s.garrison - Math.max(1, Math.round(s.garrison - atk / 1.5));
+    s.garrison -= lost;
+    garrisonLoses(s, lost);
     if (p.general) releaseGeneral(p, Math.random() < 0.4);
+    membersDie(p, p.troops.length);
     removeParty(p);
     addChronicle(`${s.name} a repoussé l'assaut ${F(p.faction).of}. Les murs tiennent.`, '🛡');
   }
@@ -237,6 +266,8 @@ function captureSettlement(s, fid, garrison) {
   const old = s.faction;
   despawnGuards(s);
   despawnTownCivilians(s);
+  for (const m of people()) if (m.alive && !m.party && m.loc === s.name && m.job === 'soldat') { if (Math.random() < 0.6) personDies(m); else m.job = 'habitant'; }
+  for (const m of people()) if (m.alive && !m.party && m.loc === s.name) m.faction = fid;
   setOwner(s, fid);
   s.garrison = garrison;
   s.capital = false;
@@ -245,6 +276,18 @@ function captureSettlement(s, fid, garrison) {
 }
 
 // ---------- Garnisons (gardes visibles quand tu es proche) ----------
+// soldats de la garnison (les personnes réelles qui vivent dans la ville)
+function garrisonPeople(s) {
+  const fac = F(s.faction);
+  const job = fac && fac.bandit ? 'bandit' : 'soldat';
+  let list = people().filter(m => m.alive && !m.party && m.loc === s.name && m.job === job);
+  while (list.length < s.garrison) list.push(newPerson({ home: s.name, job, faction: s.faction, lvl: randInt(15, 30), fame: randInt(0, 5) }));
+  return list;
+}
+function garrisonLoses(s, n) {
+  const list = garrisonPeople(s).sort(() => Math.random() - 0.5);
+  for (let i = 0; i < n && i < list.length; i++) personDies(list[i]);
+}
 function spawnGuards(s) {
   s.guardsMat = true;
   s.guards = [];
@@ -275,6 +318,9 @@ function addGuard(s, i) {
   const x = s.x + Math.cos(a) * r, z = s.z + Math.sin(a) * r;
   const troop = fac.bandit ? 'pillard' : (i === 2 || i === 3 ? 'archer' : 'veteran');
   const u = makeTroop(s.faction, troop, x, z, { guardOf: s, title: 'Garde' });
+  const used = new Set((s.guards || []).map(g => g.pid));
+  const m = garrisonPeople(s).find(m => !used.has(m.id));
+  if (m) { bindUnit(u, m); if (!m.epithet) u.title = `Garde · ${rankLabel(m)}`; }
   u.home = { x, z, yaw: Math.atan2(Math.cos(s.gate), Math.sin(s.gate)) };
   s.guards.push(u);
 }
@@ -289,11 +335,13 @@ function updateGarrisons(dt) {
     if (near && !s.guardsMat) spawnGuards(s);
     else if (!near && s.guardsMat) despawnGuards(s);
     if (!s.guardsMat) continue;
-    const living = s.guards.filter(u => !u.dead);
-    if (living.length < Math.min(s.garrison, 6)) {
+    // renforts seulement en temps de calme, et seulement s'il reste des soldats dans la ville
+    const posted = s.guards.filter(u => !u.dead && !u.rank).length;
+    const fighting = units.some(u => alive(u) && !u.civil && d2(u.pos, s) < s.r + 35 && hostileF(u.faction, s.faction));
+    if (!fighting && posted < Math.min(s.garrison, 6)) {
       s.reinforce = (s.reinforce || 0) + dt;
-      if (s.reinforce > 15) { s.reinforce = 0; addGuard(s, s.guards.length); logMsg(`Des renforts sortent de ${s.name}.`); }
-    }
+      if (s.reinforce > 45) { s.reinforce = 0; addGuard(s, s.guards.length); logMsg(`Une relève de gardes prend son poste à ${s.name}.`); }
+    } else s.reinforce = 0;
     // assaut en direct : une armée ennemie dans les murs et plus de garnison
     if (s.garrison <= 0) {
       const army = state.parties.find(p => p.mat && p.kind === 'army' && hostileF(p.faction, s.faction) &&
@@ -320,7 +368,7 @@ function partyThink(p) {
     } else p.dest = { x: t.x, z: t.z };
     return;
   }
-  if (p.kind === 'caravan') return;
+  if (p.kind === 'caravan' || p.kind === 'travel') return;
   // chasse un groupe ennemi plus faible à proximité
   let prey = null, bd = p.kind === 'bandits' ? 70 : 90;
   for (const q of state.parties) {
@@ -363,13 +411,14 @@ function updateParties(dt) {
     }
     if (!p.troops.length && !p.mat) { removeParty(p); continue; }
     // arrivée
+    if (p.kind === 'travel' && d2(p, p.dest) < 8) { travelArrive(p); removeParty(p); continue; }
     if (p.kind === 'caravan') {
       if (p.arrived != null) {
         p.arrived -= dt;
-        if (p.arrived <= 0) { removeParty(p); continue; }
+        if (p.arrived <= 0) { if (!p.mat) membersSettle(p, settlementByName(p.home), 'soldat'); removeParty(p); continue; }
       } else if (d2(p, p.dest) < 8) {
         caravanArrive(p);
-        if (!p.mat) { removeParty(p); continue; }
+        if (!p.mat) { membersSettle(p, settlementByName(p.home), 'soldat'); removeParty(p); continue; }
         const dst = settlementByName(p.target);
         p.arrived = 10;
         if (dst) p.dest = { x: dst.x, z: dst.z };
@@ -575,7 +624,12 @@ function updateWorld(dt) {
   state.garrisonTimer -= dt;
   if (state.garrisonTimer <= 0) {
     state.garrisonTimer = 60;
-    for (const s of state.settlements) s.garrison = Math.min(s.type === 'ville' ? 10 : 6, s.garrison + 1);
+    // la garnison se reconstitue avec les habitants qui s'enrôlent (pas de soldats tombés du ciel)
+    for (const s of state.settlements) {
+      if (s.garrison >= (s.type === 'ville' ? 10 : 6) || s.guardsMat && units.some(u => alive(u) && !u.civil && d2(u.pos, s) < s.r + 35 && hostileF(u.faction, s.faction))) continue;
+      const rec = people().find(m => m.alive && !m.party && m.loc === s.name && ['habitant', 'ouvrier'].includes(m.job));
+      if (rec || s.type === 'repaire') { if (rec) { rec.job = F(s.faction).bandit ? 'bandit' : 'soldat'; rec.faction = s.faction; rec.node = null; } s.garrison++; }
+    }
     promoteGenerals();
   }
   updateEconomy(dt);
@@ -583,6 +637,7 @@ function updateWorld(dt) {
 
 // premier peuplement du monde
 function populateWorld() {
+  generatePeople();
   for (const f of majorFactions()) { spawnPatrol(f.id); spawnPatrol(f.id); spawnCaravan(f.id); }
   for (let i = 0; i < 5; i++) spawnBandits();
   for (let i = 0; i < 4; i++) spawnBandits(null, 'cannibales');

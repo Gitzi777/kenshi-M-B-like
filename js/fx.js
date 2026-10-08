@@ -19,12 +19,7 @@ function audioInit() {
   const d = buf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   sfxState.noise = buf;
-  // vent continu
-  const w = ctx.createBufferSource(); w.buffer = buf; w.loop = true;
-  const wf = ctx.createBiquadFilter(); wf.type = 'bandpass'; wf.frequency.value = 400; wf.Q.value = 0.6;
-  const wg = ctx.createGain(); wg.gain.value = 0;
-  w.connect(wf); wf.connect(wg); wg.connect(master); w.start();
-  Object.assign(sfxState, { wind: w, windGain: wg, windFilter: wf });
+  // pas de bruit de fond continu (le souffle grésillait) : seulement des sons ponctuels et doux
 }
 ['keydown', 'mousedown', 'touchstart'].forEach(ev => window.addEventListener(ev, audioInit, { capture: true }));
 function setVolume(v) { settings.volume = v; if (sfxState.master) sfxState.master.gain.value = v; }
@@ -80,8 +75,8 @@ const SFX = {
   unlock: (t, v) => { tone(t, 0.25 * v, 1200, 1200, 0.05, 'square'); tone(t + 0.08, 0.25 * v, 800, 800, 0.08, 'square'); },
   fail: (t, v) => tone(t, 0.2 * v, 300, 150, 0.2, 'square'),
   bird: (t, v) => { const f = rand(2500, 4200); for (let i = 0; i < randInt(2, 4); i++) tone(t + i * 0.11, 0.05 * v, f, f * rand(0.7, 1.3), 0.08, 'sine', 0.01); },
-  cricket: (t, v) => { for (let i = 0; i < 3; i++) tone(t + i * 0.06, 0.03 * v, 4400, 4300, 0.035, 'square', 0.005); },
-  murmur: (t, v) => { for (let i = 0; i < 3; i++) tone(t + i * rand(0.12, 0.2), 0.03 * v, rand(160, 260), rand(140, 280), 0.18, 'triangle', 0.04); },
+  cricket: (t, v) => { for (let i = 0; i < 3; i++) tone(t + i * 0.07, 0.02 * v, 3200, 3150, 0.05, 'sine', 0.01); },
+  murmur: (t, v) => { for (let i = 0; i < 2; i++) tone(t + i * rand(0.15, 0.25), 0.015 * v, rand(180, 260), rand(160, 240), 0.2, 'sine', 0.06); },
 };
 function sfx(name, pos, vol = 1) {
   const { ctx } = sfxState;
@@ -91,20 +86,14 @@ function sfx(name, pos, vol = 1) {
   SFX[name](ctx.currentTime + 0.005, v);
 }
 
-// ambiance : vent (fort dans le désert et la tempête), oiseaux le jour, grillons la nuit, rumeur des villes
+// ambiance : oiseaux le jour, grillons la nuit, rumeur des villes (sons ponctuels, jamais de souffle continu)
 function updateAmbience(dt) {
   const { ctx } = sfxState;
-  if (!ctx || !player) return;
-  const storm = state.storm > 0 && biomeAt(player.pos.x, player.pos.z) === 'desert';
+  if (!ctx || !player || settings.ambience === false) return;
   const bio = biomeAt(player.pos.x, player.pos.z);
-  const t = performance.now() / 1000;
-  const gust = 0.5 + 0.5 * Math.sin(t * 0.37) * Math.sin(t * 0.13 + 1);
-  const want = storm ? 0.32 : (bio === 'desert' || bio === 'montagne' || bio === 'sel' ? 0.08 : 0.04) * (0.5 + gust);
-  sfxState.windGain.gain.value += (want - sfxState.windGain.gain.value) * Math.min(1, dt * 2);
-  sfxState.windFilter.frequency.value = 280 + gust * (storm ? 900 : 380);
   sfxState.nextAmb -= dt;
   if (sfxState.nextAmb > 0) return;
-  sfxState.nextAmb = rand(1.5, 5);
+  sfxState.nextAmb = rand(4, 10);
   const town = settlementAt(player.pos, 10);
   if (town && town.type !== 'repaire' && !isNight()) { sfx('murmur', null, 1); return; }
   if (isNight()) sfx('cricket', null, bio === 'desert' ? 0.6 : 1);

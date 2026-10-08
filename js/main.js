@@ -513,6 +513,7 @@ function update(dt) {
   updateUnits(dt);
   updateArrows(dt);
   updateWorld(dt);
+  updatePeople(dt);
   updateWildlife(dt);
   updateStorm(dt);
 
