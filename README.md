@@ -4,9 +4,22 @@ Jeu bac à sable 3D à la 3e personne dans le navigateur, inspiré de **Kenshi**
 
 ## Jouer
 
-Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour charger Three.js).
+Lance un petit serveur dans le dossier (par exemple `python3 -m http.server`) puis ouvre http://localhost:8000.
+Ouvert directement en double-cliquant, le jeu marche mais sans les modèles 3D détaillés (le navigateur bloque leur chargement).
 
 ## Contenu
+
+- **Vrais modèles 3D animés** (licence CC0) : personnages KayKit (chevalier, barbare, aventurier, encapuchonné, mage) avec
+  76 animations (marche, course, attaques, parade, esquive, coups reçus, K.O., mort, assis…), fondus entre les mouvements,
+  tenues teintées aux couleurs de chaque faction. Arbres, pins, rochers, buissons, fleurs (Quaternius) et maisons
+  médiévales à colombages assemblées pièce par pièce (Quaternius). Rendu « cel shading » doux avec lumière de contour.
+- **Parler aux PNJ** (E) : nouvelles et rumeurs (figures redoutées, bandes proches, prix), directions, travail (primes sur
+  des bandes, livraisons, chasse aux prédateurs), recrutement, menaces, pots-de-vin. Journal des tâches (J).
+- **Ta faction et ta base** (B) : fonde ta faction (nom, couleurs, emblème), construis palissades, portes, tours de guet,
+  maisons, forge, établis, entrepôt, champs, feux de camp et étendard. Toi et ton escouade construisez sur place.
+  Engage des gardes. Les bandits peuvent piller ta base en ton absence.
+- **Prendre des villes** : vaincs la garnison d'une ville ennemie puis appuie sur E pour la revendiquer. Tes villes paient
+  un impôt chaque jour ; engage des gardes pour les tenir, car l'ancien maître voudra la reprendre.
 
 - **Graphismes** : rendu « film » (tons ACES), ciel en dégradé avec soleil, nuages, étoiles et cycle jour/nuit coloré
   (aube, plein jour, coucher de soleil, nuit bleutée avec torche), brouillard d'horizon, ombres douces.
@@ -79,6 +92,9 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
 | Changer de caméra (suivie, tactique, épaule) / de perso | V / C |
 | Frapper (vers le curseur) | Clic gauche |
 | Arme, arc ou poings | X |
+| Parler à quelqu'un, prendre une ville | E |
+| Journal des tâches | J |
+| Faction et construction | B (clic pour poser, R pour tourner, Échap pour annuler) |
 | Ville ou exploitation, fouiller, inventaire, carte | E, F, I, M |
 | Ordres à l'escouade | 1 suivre · 2 charger · 3 tenir · 4 groupés · 5 attaquer ma cible |
 | Temps accéléré, réglages | T, O |
@@ -96,5 +112,9 @@ Ouvre `index.html` dans ton navigateur (connexion internet nécessaire pour char
 - `js/economy.js` : stocks, prix, caravanes marchandes, civils
 - `js/wildlife.js` : animaux sauvages, nuit, tempêtes de sable
 - `js/people.js` : habitants persistants, métiers, prestige, grades, mercenaires, voyages
+- `js/assets.js` : chargement des modèles 3D, personnages animés, maisons modulaires, végétation détaillée
+- `js/talk.js` : dialogues, quêtes, journal
+- `js/base.js` : ta faction, ta base, constructions, prise de villes
+- `assets/` : modèles 3D CC0 (voir `assets/CREDITS.md`)
 - `js/ui.js` : interface, carte, inventaire, réglages, sauvegarde
 - `js/main.js` : contrôles, caméra, boucle de jeu

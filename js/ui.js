@@ -116,6 +116,9 @@ function renderHud() {
     const lk = lockTargetNear(player.pos);
     if (corpse) txt = `F : fouiller ${corpse.name}${corpse.down > 0 ? ' · G : le porter · K : l\'achever' : ''}`;
     else if (lk) txt = `E : crocheter (${lk.name}, niveau ${lk.lock})`;
+    else if (build.type) txt = `🔨 ${STRUCTS[build.type].name} · clic : poser · R : tourner · Échap : annuler${build.ok ? '' : ' · ⚠ ' + build.why}`;
+    else if (capturableTown()) txt = `La garnison de ${state.currentTown.name} est vaincue · E : prendre la ville`;
+    else if (unfinished().some(st => Math.hypot(st.x - player.pos.x, st.z - player.pos.z) < 6)) { const st = unfinished().find(st => Math.hypot(st.x - player.pos.x, st.z - player.pos.z) < 6); txt = `🏗 Construction : ${STRUCTS[st.type].name} ${Math.floor(st.progress * 100)} % (reste à côté)`; }
     else if (talkTargetNear() && (!state.currentService || d2(talkTargetNear().pos, player.pos) < 1.8)) txt = `E : parler à ${talkTargetNear().name}`;
     else if (state.currentService) txt = `E : ${state.currentService.name}`;
     else if (state.currentTown && state.currentTown.type === 'repaire') txt = '';
@@ -203,7 +206,7 @@ function drawMinimap() {
 }
 
 // ---------- Panneaux ----------
-const PANELS = { town: 'town', inv: 'inventory', loot: 'loot', map: 'worldmap', node: 'nodepanel', settings: 'settings', lock: 'lockpanel', toll: 'tollpanel', talk: 'talkpanel', journal: 'journal' };
+const PANELS = { town: 'town', inv: 'inventory', loot: 'loot', map: 'worldmap', node: 'nodepanel', settings: 'settings', lock: 'lockpanel', toll: 'tollpanel', talk: 'talkpanel', journal: 'journal', build: 'buildpanel' };
 function openPanel(name) {
   state.panel = name;
   state.craftStation = null;
@@ -218,7 +221,7 @@ function closePanel() {
 }
 function togglePanel(name) { if (state.panel === name) closePanel(); else openPanel(name); }
 function renderPanel() {
-  const r = { town: renderTown, inv: renderInventory, loot: renderLoot, map: renderMap, node: renderNode, settings: renderSettings, lock: renderLock, toll: renderToll, talk: () => renderTalk(), journal: () => renderJournal() }[state.panel];
+  const r = { town: renderTown, inv: renderInventory, loot: renderLoot, map: renderMap, node: renderNode, settings: renderSettings, lock: renderLock, toll: renderToll, talk: () => renderTalk(), journal: () => renderJournal(), build: () => renderBuild() }[state.panel];
   if (r) r();
 }
 
@@ -240,7 +243,7 @@ state.townTab = 'marche';
 function openBuilding(s, v) {
   state.currentTown = s;
   state.building = v;
-  state.townTab = SERVICE_TABS[v.type][0][0];
+  state.townTab = v.own ? 'artisanat' : SERVICE_TABS[v.type][0][0];
   openPanel('town');
 }
 function shopFor(f, type) {
@@ -255,7 +258,7 @@ function renderTown() {
   const el = $('town');
   if (!s || !v) { closePanel(); return; }
   const f = F(s.faction);
-  const tabs = SERVICE_TABS[v.type];
+  const tabs = v.own ? SERVICE_TABS[v.type].filter(t => t[0] === 'artisanat') : SERVICE_TABS[v.type];
   let body = '';
   if (playerHostileTo(s.faction) && state.townTab !== 'faction') {
     body = `<p class="bad">${esc(v.keeper)} refuse de traiter avec un ennemi ${esc(f.of)}. Les gardes vont t'attaquer.</p>
@@ -1007,7 +1010,7 @@ function saveGame(silent) {
       home: p.home, target: p.target, cargo: p.cargo || null, members: p.mat ? p.units.filter(u => !u.dead).map(u => u.pid || null) : p.members || null,
       general: p.general || null, name: p.name })),
     people: state.people || null,
-    chronicle: state.chronicle, trades: state.trades, quests: state.quests || [], saved: Date.now(), jail: state.jail, tollPaid: state.tollPaid, tollAngry: state.tollAngry,
+    chronicle: state.chronicle, trades: state.trades, quests: state.quests || [], base: baseSaveData(), saved: Date.now(), jail: state.jail, tollPaid: state.tollPaid, tollAngry: state.tollAngry,
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -1036,7 +1039,7 @@ function loadGame(data) {
   for (const sd of data.settlements) {
     const s = settlementByName(sd.name);
     if (s) { Object.assign(s, { capital: sd.capital, garrison: sd.garrison, pop: sd.pop, stock: sd.stock, hist: sd.hist || {} }); setOwner(s, sd.faction); }
-    else makeSettlement(sd);
+    else if (sd.type !== 'base') makeSettlement(sd);
   }
   data.nodes.forEach((nd, i) => {
     const n = state.nodes[i];
@@ -1053,6 +1056,8 @@ function loadGame(data) {
     if (pd.general) p.general = pd.general;
     if (pd.name) p.name = pd.name;
   }
+  baseLoad(data.base, data.settlements.find(t => t.type === 'base'));
+  if (F('player')) { Object.assign(PLAYER_FLAG, { colors: F('player').colors, flag: F('player').flag }); delete PLAYER_FLAG._flagTex; }
   state.people = data.people || null;
   if (state.people) { indexPeople(); relinkShops(); } else generatePeople();
   if (player) removeUnit(player);

@@ -170,7 +170,7 @@ function spawnTownCivilians(s) {
   s.civilians = [];
   if (s.type === 'repaire') return;
   for (const v of s.services) {
-    if (v.type === 'marche') continue;
+    if (v.type === 'marche' || v.own) continue;
     const kx = v.kx != null ? v.kx : v.x, kz = v.kz != null ? v.kz : v.z;
     const u = makeCivilian(s.faction, kx, kz, { type: 'stall', x: kx, z: kz, yaw: v.yaw, town: s.name, timer: 999 }, SERVICE_KEEPER[v.type]);
     u.name = v.keeper;

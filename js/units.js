@@ -232,8 +232,9 @@ const units = [];
 let player = null;
 const isPlayerSide = u => u.faction === 'player';
 const alive = u => u && !u.dead && !(u.down > 0) && !(u.isPlayer && state.ko > 0) && !u.hidden;
-const squad = () => units.filter(u => u.faction === 'player' && !u.isPlayer && !u.dead);
-const team = () => units.filter(u => u.faction === 'player' && !u.dead);
+// ton escouade : ni les gardes de tes villes, ni leurs habitants
+const squad = () => units.filter(u => u.faction === 'player' && !u.isPlayer && !u.dead && !u.guardOf && !u.civil);
+const team = () => units.filter(u => u.faction === 'player' && !u.dead && !u.guardOf && !u.civil);
 const displayName = u => u.title ? `${u.title} ${u.name}` : u.name;
 
 function makeBar(color) {
@@ -440,7 +441,7 @@ const canHit = (u, o) => o !== u && (isPlayerSide(u)
   : hostile(u, o));
 
 // ---------- Murs entre deux points (coups, flèches, chemins) ----------
-const hasRing = s => s.type !== 'repaire';
+const hasRing = s => s.type !== 'repaire' && s.type !== 'base';
 const ringGap = s => (s.type === 'ville' ? 0.15 : 0.22) * 34 / s.r;
 // la ligne a→b traverse-t-elle l'enceinte d'une ville ailleurs qu'à la porte ?
 function ringBetween(a, b) {
@@ -617,7 +618,7 @@ const lootEmpty = l => !l || (!l.items.length && !l.coins && !Object.values(l.go
 function kill(o, by) {
   if (typeof questOnKill === 'function') questOnKill(o, by);
   // ton escouade n'est jamais tuée : elle tombe K.O. comme dans Kenshi
-  if (isPlayerSide(o)) { downUnit(o); return; }
+  if (isPlayerSide(o) && !o.guardOf && !o.civil) { downUnit(o); return; }
   // les humains tombent souvent K.O. au lieu de mourir (on peut les fouiller, les porter, les livrer)
   const koChance = by && isFists(by) ? 1 : 0.5;
   if (!o.animal && !o.civil && o.rank !== 'ruler' && !o.down && !o.noKO && Math.random() < koChance) { npcDown(o, by); return; }
@@ -904,7 +905,7 @@ function collide(u) {
     if (d < min && d > 0.001) { u.pos.x = o.x + dx / d * min; u.pos.z = o.z + dz / d * min; }
   }
   for (const s of state.settlements) {
-    if (s.type === 'repaire') continue;
+    if (s.type === 'repaire' || s.type === 'base') continue;
     const dx = u.pos.x - s.x, dz = u.pos.z - s.z;
     const d = Math.hypot(dx, dz);
     const gap = s.type === 'ville' ? 0.15 : 0.22;
@@ -1053,6 +1054,7 @@ function updatePlayerSideAI(u, dt, idx) {
   if (u.target) { u.heal = null; fight(u, u.target, dt); return; }
   setMode(u, 'melee');
   if (autoHeal(u, dt)) return;
+  if (squadBuildTask(u, dt)) return;
   if (u.assignedNode != null && updateAssignedWorker(u, dt)) return;
   const row = Math.floor(idx / 3), col = (idx % 3) - 1;
   const spacing = state.order === 'close' ? 1.2 : 1.6;
@@ -1140,7 +1142,7 @@ function updateNPC(u, dt, idx) {
   if (u.civil) { updateCivil(u, dt); return; }
   if (u.animal) { updateAnimal(u, dt); return; }
   u.working = false;
-  if (isPlayerSide(u)) { updatePlayerSideAI(u, dt, idx); return; }
+  if (isPlayerSide(u) && !u.guardOf) { updatePlayerSideAI(u, dt, idx); return; }
   u.retarget -= dt;
   if (u.target && (!alive(u.target) || u.target.jailed || !hostile(u, u.target) || d2(u.pos, u.target.pos) > 70)) u.target = null;
   const fac = F(u.faction);

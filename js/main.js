@@ -51,6 +51,8 @@ canvasEl.addEventListener('mousedown', e => {
   if (isFollow()) {
     if (e.button === 1) { midDrag = { x: e.clientX, y: e.clientY }; e.preventDefault(); return; }
     if (!hadFocus && e.button === 0) return; // le premier clic sert seulement à reprendre la main
+    if (build.type && e.button === 0) { confirmPlacing(); return; }
+    if (build.type && e.button === 2) { stopPlacing(); return; }
     if (e.button === 0) playerPrimary();
     if (e.button === 2 && !player.sheathed) rightHeld = true;
     return;
@@ -233,10 +235,13 @@ window.addEventListener('keydown', e => {
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
   if (state.mode !== 'play') return;
   const k = e.key.toLowerCase();
-  if (k === 'escape') { closePanel(); refocus(); return; }
+  if (k === 'escape') { if (build.type) stopPlacing(); closePanel(); refocus(); return; }
   if (state.ko > 0) return;
   if (k === 'o') { togglePanel('settings'); return; }
+  if (build.type && k === 'escape') { stopPlacing(); return; }
   if (k === 'm') togglePanel('map');
+  else if (k === 'b' && !state.panel) togglePanel('build');
+  else if (k === 'b' && state.panel === 'build') closePanel();
   else if (k === 'j') togglePanel('journal');
   else if (k === 'i' || e.code === 'Tab') togglePanel('inv');
   else if (k === 'e') {
@@ -245,6 +250,7 @@ window.addEventListener('keydown', e => {
       const lk = lockTargetNear(player.pos);
       const npc = !player.jailed && !player.carrying ? talkTargetNear() : null;
       if (player.carrying && state.currentService && state.currentService.type === 'prison') openBuilding(state.currentTown, state.currentService);
+      else if (capturableTown()) takeTown(capturableTown());
       else if (npc && (!state.currentService || d2(npc.pos, player.pos) < 1.8)) openTalk(npc);
       else if (lk && (player.jailed || !state.currentService)) { state.lockTarget = lk; openPanel('lock'); }
       else if (state.currentService && !player.jailed) openBuilding(state.currentTown, state.currentService);
@@ -261,6 +267,7 @@ window.addEventListener('keydown', e => {
     logMsg(state.run ? '🏃 Course activée (Maj pour marcher).' : '🚶 Marche.');
   }
   else if (k === 'v') setCamMode({ suivie: 'rts', rts: 'tps', tps: 'suivie' }[settings.camMode] || 'suivie');
+  else if (k === 'r' && build.type) { build.yaw += Math.PI / 4; }
   else if (k === 'r') {
     setSheathed(player, !player.sheathed);
     logMsg(player.sheathed ? 'Tu ranges ton arme.' : 'Tu dégaines.');
@@ -518,6 +525,8 @@ function update(dt) {
   updateArrows(dt);
   updateWorld(dt);
   updatePeople(dt);
+  updatePlacing();
+  updateBase(dt);
   state.questTimer = (state.questTimer || 0) - dt;
   if (state.questTimer <= 0) { state.questTimer = 2; questTick(); }
   updateWildlife(dt);
@@ -542,6 +551,7 @@ function update(dt) {
     if (state.goods.food >= need) {
       state.goods.food -= need;
       logMsg(`Jour ${state.day}. Vous mangez ${need} vivres.`);
+      collectTaxes();
     } else {
       state.goods.food = 0;
       logMsg(`Jour ${state.day}. Pas assez de vivres : tout le monde a faim (-20 PV).`, 'warn');

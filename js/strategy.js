@@ -3,7 +3,7 @@
 
 // ---------- Factions ----------
 const aliveFactions = () => Object.values(state.factions).filter(f => f.alive);
-const majorFactions = () => aliveFactions().filter(f => !f.bandit);
+const majorFactions = () => aliveFactions().filter(f => !f.bandit && !f.isPlayer);
 const settlementsOf = fid => state.settlements.filter(s => s.faction === fid);
 const partiesOf = fid => state.parties.filter(p => p.faction === fid);
 const atWar = (a, b) => state.relations[relKey(a, b)] === 'war';
@@ -199,7 +199,7 @@ function raiseRaid(fid) {
 function raiseArmy(fid) {
   const enemies = enemiesOf(fid);
   // les villes tombées aux mains des bandits sont aussi des cibles
-  const targets = state.settlements.filter(s => enemies.some(e => e.id === s.faction) || (F(s.faction).bandit && s.type !== 'repaire' && d2(s, nearestSettlement(s, x => x.faction === fid) || s) < 600));
+  const targets = state.settlements.filter(s => enemies.some(e => e.id === s.faction) || (s.faction === 'player' && playerHostileTo(fid)) || (F(s.faction).bandit && s.type !== 'repaire' && d2(s, nearestSettlement(s, x => x.faction === fid) || s) < 600));
   const own = settlementsOf(fid);
   if (!targets.length || !own.length) return null;
   let best = null, bd = Infinity, from = null;
@@ -241,6 +241,18 @@ function siege(p, s) {
   const old = s.faction;
   const atk = partyPower(p) * rand(0.8, 1.25);
   const def = (s.garrison * 1.3 + 2) * (s.capital ? 1.3 : 1) * rand(0.8, 1.2);
+  if (atk > def && s.type === 'base') {
+    // une base n'est pas une ville : on la pille
+    for (const g in s.stock) s.stock[g] = Math.floor(s.stock[g] * 0.5);
+    const lost = Math.floor(state.goods.food * 0.2);
+    state.goods.food -= lost;
+    s.garrison = 0;
+    addChronicle(`${theF(F(p.faction), true)} ${vb(F(p.faction), 'pille', 'pillent')} ${s.name} !`, '🔥');
+    logMsg(`🔥 Ta base ${s.name} a été pillée en ton absence !`, 'warn');
+    membersDie(p, Math.floor(p.troops.length / 3));
+    p.kind = 'bandits'; p.target = null; p.name = partyName(p);
+    return old;
+  }
   if (atk > def) {
     const survivors = Math.max(2, Math.round(partyTroops(p).length * 0.6));
     if (p.general) releaseGeneral(p, false);
@@ -296,7 +308,7 @@ function spawnGuards(s) {
   for (let i = 0; i < n; i++) addGuard(s, i);
   // le souverain réside au palais de sa capitale
   const fac = F(s.faction);
-  if (s.throne && !fac.bandit) {
+  if (s.throne && !fac.bandit && s.faction !== 'player') {
     const u = makeTroop(s.faction, 'general', s.throne.x, s.throne.z, { guardOf: s, name: fac.leader, title: '', rank: 'ruler' });
     u.home = { x: s.throne.x, z: s.throne.z, yaw: s.buildings.find(b => b.hw === 7) ? s.buildings.find(b => b.hw === 7).yaw : 0 };
     s.guards.push(u);
