@@ -13,7 +13,7 @@ let locked = false, rightHeld = false, midDrag = null, boxSel = null;
 let mouseDir = 'haut';
 const dirAcc = { x: 0, y: 0 };
 state.selected = [];
-state.run = false;
+state.run = true; // on court par défaut (Maj : marcher)
 
 const canvasEl = renderer.domElement;
 const isRTS = () => settings.camMode === 'rts';
@@ -264,7 +264,7 @@ window.addEventListener('keydown', e => {
   else if ((e.code === 'AltLeft' || e.code === 'AltRight') && !e.repeat) { e.preventDefault(); startDodge(); }
   else if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) {
     state.run = !state.run;
-    logMsg(state.run ? '🏃 Course activée (Maj pour marcher).' : '🚶 Marche.');
+    logMsg(state.run ? '🏃 Course (Maj pour marcher).' : '🚶 Marche (Maj pour courir).');
   }
   else if (k === 'v') setCamMode({ suivie: 'rts', rts: 'tps', tps: 'suivie' }[settings.camMode] || 'suivie');
   else if (k === 'r' && build.type) { build.yaw += Math.PI / 4; }
@@ -453,7 +453,7 @@ function updatePlayer(dt) {
     if (s) player.yaw -= s * dt * (f < 0 ? -2.4 : 2.4);
     if (f || s) player.cmd = null;
     player.backward = f < 0;
-    const mul = f ? (f < 0 ? 0.6 : 1) * (player.block || player.atk ? 0.5 : state.run ? 1.6 : 1) * (player.carrying ? 0.65 : 1) : 0;
+    const mul = f ? (f < 0 ? 0.45 : 1) * (player.block || player.atk ? 0.45 : state.run ? 1.35 : 0.55) * (player.carrying ? 0.65 : 1) : 0;
     accelerate(player, Math.sin(player.yaw) * f * speedOf(player) * mul, Math.cos(player.yaw) * f * speedOf(player) * mul, dt);
     if (player.draw >= 0) player.draw += dt;
     player.working = false;
@@ -479,7 +479,7 @@ function updatePlayer(dt) {
   const combat = player.block || player.atk || player.draw >= 0;
   // vue suivie, arme dégainée : le personnage regarde vers le curseur
   const aimYaw = follow && !player.sheathed && mouse.ground ? Math.atan2(mouse.ground.x - player.pos.x, mouse.ground.z - player.pos.z) : null;
-  const mul = len > 0 ? (combat ? 0.5 : state.run ? 1.6 : 1) * (player.carrying ? 0.65 : 1) : 0;
+  const mul = len > 0 ? (combat ? 0.45 : state.run ? 1.35 : 0.55) * (player.carrying ? 0.65 : 1) : 0;
   if (len > 0) { mx /= len; mz /= len; }
   accelerate(player, mx * speedOf(player) * mul, mz * speedOf(player) * mul, dt);
   if (len > 0) {

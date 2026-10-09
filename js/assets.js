@@ -153,91 +153,156 @@ function makeSkinnedCharacter(look) {
     legL: new T.Group(), legR: new T.Group(), armL: new T.Group(), armR: new T.Group(), torso: new T.Group(),
   };
 }
-function actionOf(c, name) {
-  if (!c.actions[name]) {
-    const clip = ASSETS.clips[name];
-    if (!clip) return null;
-    c.actions[name] = c.mixer.clipAction(clip);
+// ---------- Animation en couches (style moteur de jeu) ----------
+// jambes : un mélange continu repos / marche / course selon la vitesse réelle, pieds synchronisés
+// haut du corps : attaques, parades, coups reçus, visée, travail se superposent pendant qu'on marche
+// corps entier : esquive, chute, mort, relevé, porté
+const LOWER_BONE = /^(hips|root|Rig|upperleg|lowerleg|foot|toes|kneeIK|heelIK|IK|control)/;
+const clipCache = { upper: {}, lower: {} };
+function partClip(name, part) {
+  const full = ASSETS.clips[name];
+  if (!full) return null;
+  if (part === 'full') return full;
+  if (!clipCache[part][name]) {
+    const keep = t => { const bone = t.name.split('.')[0]; return part === 'lower' ? LOWER_BONE.test(bone) : !LOWER_BONE.test(bone); };
+    clipCache[part][name] = new T.AnimationClip(name + '_' + part, full.duration, full.tracks.filter(keep));
   }
-  return c.actions[name];
+  return clipCache[part][name];
 }
-// joue une animation en boucle avec un fondu
-function playLoop(c, name, timeScale = 1, fade = 0.2) {
-  const a = actionOf(c, name);
-  if (!a) return;
-  a.timeScale = timeScale;
-  if (c.cur === name) return;
-  const prev = c.cur && c.actions[c.cur];
-  a.reset().setLoop(T.LoopRepeat, Infinity).play();
-  a.enabled = true; a.setEffectiveWeight(1);
-  if (prev) prev.crossFadeTo(a, fade, false);
-  c.cur = name;
+function act(c, name, part = 'full') {
+  const key = name + '|' + part;
+  if (!c.actions[key]) {
+    const clip = partClip(name, part);
+    if (!clip) return null;
+    const a = c.mixer.clipAction(clip);
+    a.enabled = true;
+    a.setEffectiveWeight(0);
+    a.play();
+    c.actions[key] = a;
+  }
+  return c.actions[key];
 }
-// joue une animation une fois (attaque, coup reçu, esquive), en l'ajustant à la durée voulue
-function playOnce(c, name, duration, fade = 0.08, hold = false) {
-  const a = actionOf(c, name);
-  if (!a) return;
-  const prev = c.cur && c.actions[c.cur];
-  a.reset().setLoop(T.LoopOnce, 1);
-  a.clampWhenFinished = true;
-  if (duration) a.setDuration(duration); else a.timeScale = 1;
-  a.play();
-  if (prev && prev !== a) prev.crossFadeTo(a, fade, false);
-  c.cur = name;
-  c.once = { name, t: 0, dur: duration || a.getClip().duration, hold };
-}
-
+// vitesses du personnage pour lesquelles l'animation colle au sol (mesurées sur le modèle)
+// (les jambes sont courtes : on accélère un peu les cycles plutôt que de faire glisser les pieds)
+const WALK_REF = 1.35, RUN_REF = 3.3;
 const ATTACK_CLIP = {
   one: { haut: '1H_Melee_Attack_Chop', droite: '1H_Melee_Attack_Slice_Horizontal', gauche: '1H_Melee_Attack_Slice_Diagonal', estoc: '1H_Melee_Attack_Stab' },
   two: { haut: '2H_Melee_Attack_Chop', droite: '2H_Melee_Attack_Slice', gauche: '2H_Melee_Attack_Slice', estoc: '2H_Melee_Attack_Stab' },
 };
 const isTwoHanded = u => { const w = IT(u.equip.weapon); return !!(w && !u.fists && (w.model === 'staff' || w.model === 'spear' || w.w >= 4)); };
+// lance une animation ponctuelle sur une couche ('upper' ou 'full')
+function startOverlay(c, layer, name, duration, opts = {}) {
+  const a = act(c, name, layer === 'upper' ? 'upper' : 'full');
+  if (!a) return;
+  const L = c[layer];
+  if (L.action && L.action !== a) L.prev = { action: L.action, w: L.w };
+  a.reset();
+  a.setLoop(opts.loop ? T.LoopRepeat : T.LoopOnce, opts.loop ? Infinity : 1);
+  a.clampWhenFinished = true;
+  a.timeScale = duration ? a.getClip().duration / duration : 1;
+  L.action = a; L.name = name; L.t = 0; L.dur = opts.loop ? Infinity : (duration || a.getClip().duration);
+  L.hold = !!opts.hold; L.fadeIn = opts.fadeIn || 0.08; L.fadeOut = opts.fadeOut || 0.15;
+  if (L.w == null) L.w = 0;
+}
+function stopOverlay(c, layer) { const L = c[layer]; if (L.action) L.dur = Math.min(L.dur, L.t); L.hold = false; }
 
-// choisit l'animation selon ce que fait l'unité ; appelé à chaque image
 function animateSkinned(u, dt) {
   const c = u.c;
-  c.root.rotation.y = u.yaw;
+  if (!c.upper) { c.upper = { w: 0 }; c.full = { w: 0 }; c.spd = 0; c.dispYaw = u.yaw; }
+  // orientation lissée : pas de demi-tours instantanés
+  c.dispYaw += angleDiff(c.dispYaw, u.yaw) * Math.min(1, dt * 14);
+  c.root.rotation.y = c.dispYaw;
   // les unités lointaines s'animent moins souvent
   const far = player ? d2(u.pos, player.pos) : 0;
   c.acc = (c.acc || 0) + dt;
-  if (far > 90 && c.acc < 0.2) return;
-  if (far > 45 && c.acc < 0.066) return;
+  if (far > 110 && c.acc < 0.2) return;
+  if (far > 70 && c.acc < 0.05) return;
   const step = c.acc; c.acc = 0;
+  // vitesse réelle (déplacement mesuré), lissée
+  const last = c.lastPos || (c.lastPos = { x: u.pos.x, z: u.pos.z });
+  const raw = step > 0 ? Math.hypot(u.pos.x - last.x, u.pos.z - last.z) / step : 0;
+  c.lastPos = { x: u.pos.x, z: u.pos.z };
+  const knock = Math.hypot(u.knock.x, u.knock.z);
+  c.spd += (Math.min(raw, 9) * (knock > 1.2 ? 0.3 : 1) - c.spd) * Math.min(1, step * 7);
   const down = u.dead || u.down > 0 || (u.isPlayer && state.ko > 0);
-  // nouvel évènement : début d'attaque, coup reçu, esquive
+
+  // ---- évènements ----
   if (down) {
-    if (!c.wasDown) { playOnce(c, u.dead ? 'Death_B' : 'Death_A', null, 0.12, true); c.wasDown = true; }
+    if (!c.wasDown) { startOverlay(c, 'full', u.dead ? 'Death_B' : 'Death_A', null, { hold: true, fadeIn: 0.12 }); c.wasDown = true; }
   } else {
-    if (c.wasDown) { playOnce(c, 'Lie_StandUp', 1.2, 0.15); c.wasDown = false; }
-    if (u.dodge && c.lastDodge !== u.dodge) { c.lastDodge = u.dodge; playOnce(c, u.dodge.back ? 'Dodge_Backward' : 'Dodge_Forward', u.dodge.dur + 0.05, 0.05); }
-    else if (u.atk && c.lastAtk !== u.atk) {
+    if (c.wasDown) { c.wasDown = false; startOverlay(c, 'full', 'Lie_StandUp', 1.4, { fadeIn: 0.25, fadeOut: 0.3 }); }
+    if (u.dodge && c.lastDodge !== u.dodge) { c.lastDodge = u.dodge; startOverlay(c, 'full', u.dodge.back ? 'Dodge_Backward' : 'Dodge_Forward', u.dodge.dur + 0.08, { fadeIn: 0.05, fadeOut: 0.12 }); }
+    if (u.atk && c.lastAtk !== u.atk) {
       c.lastAtk = u.atk;
-      let clip;
-      if (u.animal) clip = null;
-      else if (isFists(u)) clip = u.combo === 1 ? 'Unarmed_Melee_Attack_Punch_B' : 'Unarmed_Melee_Attack_Punch_A';
-      else clip = ATTACK_CLIP[isTwoHanded(u) ? 'two' : 'one'][u.atk.dir] || '1H_Melee_Attack_Chop';
-      // la frappe de l'animation tombe vers 45 % : on cale ce moment sur l'impact du jeu
-      if (clip) playOnce(c, clip, u.atk.windup / 0.45, 0.06);
-    } else if (u.flinch > 0.2 && c.lastHurt !== u.hurtId) {
+      const clip = isFists(u) ? (u.combo === 1 ? 'Unarmed_Melee_Attack_Punch_B' : 'Unarmed_Melee_Attack_Punch_A') : ATTACK_CLIP[isTwoHanded(u) ? 'two' : 'one'][u.atk.dir] || '1H_Melee_Attack_Chop';
+      // la frappe de l'animation tombe vers 45 % : on la cale sur l'impact du jeu, puis on laisse le geste finir
+      startOverlay(c, 'upper', clip, Math.max(u.atk.total + 0.25, u.atk.windup / 0.45), { fadeIn: 0.06, fadeOut: 0.2 });
+      c.upperKind = 'atk';
+    } else if (u.hurtId && c.lastHurt !== u.hurtId) {
       c.lastHurt = u.hurtId;
-      if (!u.atk) playOnce(c, u.block ? 'Block_Hit' : (Math.random() < 0.5 ? 'Hit_A' : 'Hit_B'), 0.45, 0.05);
+      if (!u.atk && !u.dodge) { startOverlay(c, 'upper', u.block ? 'Block_Hit' : (Math.random() < 0.5 ? 'Hit_A' : 'Hit_B'), 0.5, { fadeIn: 0.04, fadeOut: 0.18 }); c.upperKind = 'hit'; }
     }
   }
-  if (c.once) {
-    c.once.t += step;
-    if (c.once.t < c.once.dur || c.once.hold && down) { c.mixer.update(step); finishFlash(u, step); return; }
-    c.once = null; c.cur = null;
+  // états continus du haut du corps (parade, visée, travail) quand aucune action ponctuelle n'est en cours
+  const U = c.upper;
+  const busy = U.action && U.t < U.dur && c.upperKind !== 'hold';
+  if (!busy && !down) {
+    const want = u.mode === 'bow' && u.draw >= 0 ? '2H_Ranged_Aiming' : u.block ? 'Blocking' : u.working ? 'Interact' : null;
+    if (want && (U.name !== want || c.upperKind !== 'hold')) { startOverlay(c, 'upper', want, null, { loop: true, fadeIn: 0.12, fadeOut: 0.15 }); c.upperKind = 'hold'; }
+    else if (!want && c.upperKind === 'hold') { stopOverlay(c, 'upper'); c.upperKind = null; }
   }
-  // états continus
-  const sp = u.vx != null && u.isPlayer ? Math.hypot(u.vx, u.vz) : u.moving * speedOf(u);
-  if (u.carriedBy) playLoop(c, 'Death_A_Pose', 1);
-  else if (u.mode === 'bow' && u.draw >= 0) playLoop(c, '2H_Ranged_Aiming', 1, 0.15);
-  else if (u.block) playLoop(c, 'Blocking', 1, 0.1);
-  else if (u.working) playLoop(c, 'Interact', 1, 0.25);
-  else if (u.jailed && !sp) playLoop(c, 'Sit_Floor_Idle', 1, 0.4);
-  else if (sp > 6.2) playLoop(c, 'Running_A', clamp(sp / 7, 0.8, 1.4), 0.2);
-  else if (sp > 0.35) playLoop(c, u.backward ? 'Walking_Backwards' : 'Walking_A', clamp(sp / 3.2, 0.6, 1.6), 0.22);
-  else playLoop(c, u.sheathed || isFists(u) ? 'Unarmed_Idle' : isTwoHanded(u) ? '2H_Melee_Idle' : 'Idle', 1, 0.3);
+  // corps entier continu : porté, assis en cellule
+  const F_ = c.full;
+  const fbusy = F_.action && (F_.t < F_.dur || F_.hold);
+  if (!fbusy) {
+    const want = u.carriedBy ? 'Death_A_Pose' : u.jailed && c.spd < 0.3 ? 'Sit_Floor_Idle' : null;
+    if (want && F_.name !== want) startOverlay(c, 'full', want, null, { loop: true, fadeIn: 0.3 });
+    else if (!want && F_.dur === Infinity) stopOverlay(c, 'full');
+  }
+  if (!down && F_.hold) F_.hold = false;
+
+  // ---- poids des couches ----
+  for (const L of [c.upper, c.full]) {
+    if (!L.action) continue;
+    L.t += step;
+    const active = L.t < L.dur || L.hold;
+    const target = active ? 1 : 0;
+    const rate = active ? L.fadeIn : L.fadeOut;
+    L.w += (target - L.w) * Math.min(1, step / Math.max(0.01, rate));
+    if (L.w < 0.003 && !active) { L.action.setEffectiveWeight(0); L.action = null; L.name = null; L.w = 0; }
+    if (L.prev) { L.prev.w -= step / 0.1; if (L.prev.w <= 0) { L.prev.action.setEffectiveWeight(0); L.prev = null; } }
+  }
+  const wF = c.full.action ? c.full.w : 0;
+  const wU = c.upper.action ? c.upper.w * (1 - wF) : 0;
+  // jambes : repos / marche / course mélangés selon la vitesse, cycles de pas synchronisés
+  const sp = c.spd;
+  const armed = !(u.sheathed || isFists(u));
+  const idleName = !armed ? 'Unarmed_Idle' : isTwoHanded(u) ? '2H_Melee_Idle' : 'Idle';
+  const walkName = u.backward ? 'Walking_Backwards' : 'Walking_A';
+  const mv = smooth(0.12, 0.7, sp), run = smooth(2.4, 3.4, sp);
+  const wIdle = 1 - mv, wWalk = mv * (1 - run), wRun = mv * run;
+  const loco = [[idleName, wIdle], [walkName, wWalk], ['Running_A', wRun]];
+  if (c.idleName && c.idleName !== idleName) loco.push([c.idleName, 0]);
+  if (c.walkName && c.walkName !== walkName) loco.push([c.walkName, 0]);
+  c.idleName = idleName; c.walkName = walkName;
+  const walkA = act(c, walkName), runA = act(c, 'Running_A');
+  if (walkA && runA) {
+    const Dw = walkA.getClip().duration, Dr = runA.getClip().duration;
+    const pw = Dw / clamp(sp / WALK_REF, 0.6, 2.1), pr = Dr / clamp(sp / RUN_REF, 0.8, 2.2);
+    const period = pw + (pr - pw) * run;
+    walkA.timeScale = Dw / period; runA.timeScale = Dr / period;
+    runA.time = (walkA.time / Dw) * Dr; // les deux cycles posent le même pied au même moment
+  }
+  const restW = (1 - wF);
+  for (const [name, w] of loco) {
+    const full = act(c, name, 'full'), low = act(c, name, 'lower');
+    if (full) full.setEffectiveWeight(w * restW * (1 - (c.upper.action ? c.upper.w : 0)));
+    if (low) { low.setEffectiveWeight(w * restW * (c.upper.action ? c.upper.w : 0)); low.timeScale = full ? full.timeScale : 1; low.time = full ? full.time : low.time; }
+  }
+  if (c.upper.action) c.upper.action.setEffectiveWeight(wU);
+  if (c.upper.prev) c.upper.prev.action.setEffectiveWeight(Math.max(0, c.upper.prev.w) * (1 - wF));
+  if (c.full.action) c.full.action.setEffectiveWeight(wF);
+  if (c.full.prev) c.full.prev.action.setEffectiveWeight(Math.max(0, c.full.prev.w));
   c.mixer.update(step);
   finishFlash(u, step);
 }

@@ -80,7 +80,7 @@ function talkOptions() {
 }
 const bribeCost = u => isFugitiveFor(player, u.faction) ? 120 : Math.round(80 + Math.max(0, -(state.rep[u.faction] || 0)) * 3);
 
-function talkSay(who, text) { state.talk.lines.push({ who, text }); if (state.talk.lines.length > 8) state.talk.lines.shift(); }
+function talkSay(who, text) { if (!state.talk) return; state.talk.lines.push({ who, text }); if (state.talk.lines.length > 8) state.talk.lines.shift(); }
 function talkChoose(key) {
   const T_ = state.talk;
   if (!T_) return;
