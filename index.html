@@ -43,8 +43,6 @@
       <span>🌾 <b id="food">0</b></span>
       <span>🏹 <b id="arrowsCount">0</b></span>
       <span>🎒 <b id="cargo">0/0</b> kg</span>
-      <span>☀️ Jour <b id="day">1</b></span>
-      <span>🗺 <b id="biome"></b></span>
       <span id="speed"></span>
       <span id="allegiance"></span>
       <span id="orderLabel"></span>
@@ -55,17 +53,31 @@
         <button id="saveBtn">💾</button>
       </span>
     </div>
-    <div id="player" class="panel">
+    <div id="prompt" class="hidden"></div>
+    <div id="log"></div>
+    <div id="objectives" class="hudcard"></div>
+    <div id="vitals" class="hudcard">
+      <div class="vital v-hp"><i>❤</i><span>Santé</span><div class="vbar"><div id="vHp"></div></div></div>
+      <div class="vital v-food"><i>🍖</i><span>Faim</span><div class="vbar"><div id="vFood"></div></div></div>
+      <div class="vital v-water"><i>💧</i><span>Soif</span><div class="vbar"><div id="vWater"></div></div></div>
+      <div class="vital v-stam"><i>⚡</i><span>Endurance</span><div class="vbar"><div id="vStam"></div></div></div>
+      <small id="vNote"></small>
+    </div>
+    <div id="mapbox">
+      <div id="mapHead"><b id="region"></b></div>
+      <div id="mapWrap"><canvas id="minimap" width="200" height="200"></canvas><span class="compass">N</span></div>
+      <div id="mapFoot"><span id="clock"></span></div>
+      <div id="player" class="panel">
       <b id="pName"></b> <small id="pLevel"></small>
       <div class="bar big"><div id="pHp"></div></div>
       <small id="pHpText"></small>
       <div id="pWeapon"></div>
       <div id="squadList"></div>
+      </div>
     </div>
-    <div id="prompt" class="hidden"></div>
-    <div id="log"></div>
-    <canvas id="minimap" width="180" height="180"></canvas>
-    <div id="controls" class="panel">
+    <div id="hotbar"></div>
+    <div id="hints"><span><b>E</b> Interagir</span><span><b>I</b> Inventaire</span><span><b>M</b> Carte</span><span><b>J</b> Journal</span><span><b>B</b> Construire</span><span><b>Maj</b> Courir</span><button id="helpBtn">? Touches</button></div>
+    <div id="controls" class="panel hidden">
       <b>Z / S</b> avancer, reculer · <b>Q / D</b> tourner · <b>Maj</b> courir / marcher<br>
       <b>Trackpad</b> : 2 doigts ↔ regarder autour · 2 doigts ↕ ou pincer : zoom<br>
       <b>R</b> dégainer / ranger · <b>Clic</b> frapper vers le curseur · <b>Espace</b> parer · <b>⌥ Option</b> esquiver · <b>X</b> arme / arc / poings<br>
@@ -75,7 +87,6 @@
     </div>
     <div id="dirInd"><span class="d-haut">▲</span><span class="d-gauche">◀</span><span class="d-droite">▶</span><span class="d-estoc">▼</span><i>+</i></div>
     <div id="threat"></div>
-    <div id="ordersBar"></div>
     <div id="selbox" class="hidden"></div>
   </div>
 
@@ -100,6 +111,7 @@
   <script src="js/vendor/SkeletonUtils.js"></script>
   <script src="js/assets.js"></script>
   <script src="js/gfx.js"></script>
+  <script src="js/scenery.js"></script>
   <script src="js/towns.js"></script>
   <script src="js/fx.js"></script>
   <script src="js/units.js"></script>

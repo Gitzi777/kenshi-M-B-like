@@ -258,10 +258,10 @@ const sky = {};
 // palettes du jour selon la hauteur du soleil
 const SKY_KEYS = [
   { e: -0.6, zenith: '#0a1430', horizon: '#26345a', ground: '#141826', sun: '#9fb4e8', sunI: 0.75, hemiS: '#5a6ea8', hemiG: '#2a2a36', hemiI: 0.85, fog: '#1e2a48' },
-  { e: -0.12, zenith: '#232c62', horizon: '#c86a4c', ground: '#3a2a26', sun: '#ff9a5a', sunI: 0.8, hemiS: '#7a6a9a', hemiG: '#3a2a22', hemiI: 0.75, fog: '#8a5a52' },
-  { e: 0.12, zenith: '#3a63a8', horizon: '#f0b07c', ground: '#7a5a40', sun: '#ffbe78', sunI: 1.7, hemiS: '#9ab4d8', hemiG: '#6a5038', hemiI: 0.7, fog: '#dcb08a' },
-  { e: 0.45, zenith: '#2f6ac0', horizon: '#d8dcd6', ground: '#a8916c', sun: '#fff0d4', sunI: 2.1, hemiS: '#b0c8e8', hemiG: '#8a6c48', hemiI: 0.72, fog: '#c8d0d0' },
-  { e: 1.0, zenith: '#2860b8', horizon: '#d2dae0', ground: '#b09a76', sun: '#fff6e4', sunI: 2.3, hemiS: '#b8d0ee', hemiG: '#8f7250', hemiI: 0.75, fog: '#c4ced4' },
+  { e: -0.12, zenith: '#232c62', horizon: '#c86a4c', ground: '#3a2a26', sun: '#ff9a5a', sunI: 0.8, hemiS: '#7a6a9a', hemiG: '#3a2a22', hemiI: 0.75, fog: '#8a5a62' },
+  { e: 0.12, zenith: '#3a6cb8', horizon: '#f2bc8c', ground: '#7a5a40', sun: '#ffc282', sunI: 1.8, hemiS: '#a6bede', hemiG: '#6a5038', hemiI: 0.75, fog: '#d8b4a0' },
+  { e: 0.45, zenith: '#2a74d2', horizon: '#c4dcf2', ground: '#a8916c', sun: '#fff2d8', sunI: 2.0, hemiS: '#b4cdee', hemiG: '#8a6c48', hemiI: 0.7, fog: '#b8c6e0' },
+  { e: 1.0, zenith: '#2468cc', horizon: '#c0daf2', ground: '#b09a76', sun: '#fff6e4', sunI: 2.15, hemiS: '#b8d2f0', hemiG: '#8f7250', hemiI: 0.72, fog: '#b4c4e0' },
 ];
 SKY_KEYS.forEach(k => { for (const f of ['zenith', 'horizon', 'ground', 'sun', 'hemiS', 'hemiG', 'fog']) k[f] = lin(k[f]); });
 const STORM = { zenith: lin('#b88a58'), horizon: lin('#d2a46c'), fog: lin('#c9965e') };
@@ -303,12 +303,13 @@ function updateAtmosphere(phase, storm, focus, farView) {
   sky.stars.position.copy(camera.position);
   sky.stars.material.opacity = storm ? 0 : night;
   sky.stars.rotation.y = phase * Math.PI * 2;
-  const far = farView ? 620 : 470;
-  scene.fog.near += ((storm ? 6 : farView ? 180 : 110) - scene.fog.near) * 0.05;
+  const far = farView ? 680 : 520;
+  scene.fog.near += ((storm ? 6 : farView ? 220 : 150) - scene.fog.near) * 0.05;
   scene.fog.far += ((storm ? 48 : far) - scene.fog.far) * 0.05;
   // nuages teintés par la lumière du moment
   sky.cloudMat.color.copy(k.horizon).lerp(new T.Color(1, 1, 1), 0.45 * (1 - night)).multiplyScalar(1 - night * 0.6);
-  sky.cloudMat.opacity = storm ? 0 : 0.8;
+  sky.cloudMat.opacity = storm ? 0 : 0.35;
+  if (typeof updateScenery === 'function') updateScenery(k, night, storm, e > -0.05 ? dir : dir.clone().multiplyScalar(-1));
   const t = gfxTime.value;
   for (const c of sky.clouds) {
     const d = c.userData;
@@ -353,7 +354,7 @@ const grass = {};
 }
 const GRASS_DENS = { steppe: 2.4, foret: 2.0, desert: 0.12, montagne: 0.6, sel: 0.03 };
 const GFX_QUALITY = { haute: { pr: 2, shadow: 2048, grass: 1 }, moyenne: { pr: 1.25, shadow: 2048, grass: 0.6 }, basse: { pr: 1, shadow: 1024, grass: 0.25 } };
-const GRASS_TINT = { steppe: '#aca45e', foret: '#5a8238', desert: '#c0a468', montagne: '#7f8c58', sel: '#c8c8b0' };
+const GRASS_TINT = { steppe: '#c2a63e', foret: '#5a8238', desert: '#c0a468', montagne: '#7f8c58', sel: '#c8c8b0' };
 const FLOWER_COLS = ['#e8d34a', '#f2f0e8', '#c94a4a', '#9a6ad0', '#f29a3a'].map(c => lin(c));
 const hash2 = (x, z) => { const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453; return s - Math.floor(s); };
 function updateGrass(focus) {
@@ -377,6 +378,10 @@ function updateGrass(focus) {
     if (towns.some(s => Math.hypot(s.x - x, s.z - z) < s.r - 4)) dens *= 0.08;
     if (nodes.some(nd => Math.hypot(nd.x - x, nd.z - z) < 11)) dens *= 0.15;
     if (onRoad(x, z) < 1.8) dens *= 0.05;
+    // pas d'herbe dans l'eau, herbe verte et drue sur les berges
+    const wd = waterDist(x, z);
+    if (wd < 1) continue;
+    if (wd < 16) dens = Math.max(dens, 2.4 * (1 - wd / 16));
     dens *= 1 - smooth(R * 0.75, R, dd) * 0.8;
     if (h > dens / 2.5 * grassDensity()) continue;
     const sc = (0.6 + hash2(i * 3, j * 5) * 0.9) * (b === 'desert' ? 0.7 : 1);
@@ -386,7 +391,7 @@ function updateGrass(focus) {
     dummy.updateMatrix();
     grass.mesh.setMatrixAt(n, dummy.matrix);
     // la couleur de l'herbe suit celle du sol, en un peu plus vif
-    col.copy(terrainColor(x, z, dummy.position.y, 1)).lerp(lin(GRASS_TINT[b]), 0.35).multiplyScalar(1.05 + hash2(i * 9, j) * 0.25);
+    col.copy(terrainColor(x, z, dummy.position.y, 1)).lerp(lin(wd < 16 ? '#6a9a3a' : GRASS_TINT[b]), 0.5).multiplyScalar(0.88 + hash2(i * 9, j) * 0.3);
     grass.mesh.setColorAt(n, col);
     n++;
     if ((b === 'steppe' || b === 'foret') && hash2(i * 13, j * 7) < 0.05 && nf < 900) {
@@ -463,15 +468,21 @@ function planRoads(list) {
         pts.push({ x: ga.x + dx * t - dz / L * off, z: ga.z + dz * t + dx / L * off });
       }
       ROADS.push(pts);
-      for (let i = 0; i < pts.length - 1; i++) {
-        const a = pts[i], b = pts[i + 1], seg = [a, b];
-        const cx0 = Math.floor((Math.min(a.x, b.x) - 6) / ROAD_CELL), cx1 = Math.floor((Math.max(a.x, b.x) + 6) / ROAD_CELL);
-        const cz0 = Math.floor((Math.min(a.z, b.z) - 6) / ROAD_CELL), cz1 = Math.floor((Math.max(a.z, b.z) + 6) / ROAD_CELL);
-        for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) {
-          const k = cx + ',' + cz;
-          if (!roadGrid.has(k)) roadGrid.set(k, []);
-          roadGrid.get(k).push(seg);
-        }
+    }
+  }
+  indexRoads();
+}
+function indexRoads() {
+  roadGrid = new Map();
+  for (const pts of ROADS) {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1], seg = [a, b];
+      const cx0 = Math.floor((Math.min(a.x, b.x) - 6) / ROAD_CELL), cx1 = Math.floor((Math.max(a.x, b.x) + 6) / ROAD_CELL);
+      const cz0 = Math.floor((Math.min(a.z, b.z) - 6) / ROAD_CELL), cz1 = Math.floor((Math.max(a.z, b.z) + 6) / ROAD_CELL);
+      for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) {
+        const k = cx + ',' + cz;
+        if (!roadGrid.has(k)) roadGrid.set(k, []);
+        roadGrid.get(k).push(seg);
       }
     }
   }

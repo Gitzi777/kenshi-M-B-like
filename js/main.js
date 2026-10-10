@@ -196,6 +196,8 @@ function cycleWeapon() {
 function startDodge() {
   const u = player;
   if (!u || u.dodge || u.down > 0 || u.jailed || u.carrying || (u.dodgeCd || 0) > 0 || isRTS()) return;
+  if ((u.stamina ?? 100) < 18) { floatText(u.pos, 'épuisé', '#ffd27a'); return; }
+  u.stamina = (u.stamina ?? 100) - 18;
   let dx = 0, dz = 0;
   const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0), s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
   const tank = isFollow() && settings.tank !== false;
@@ -453,7 +455,7 @@ function updatePlayer(dt) {
     if (s) player.yaw -= s * dt * (f < 0 ? -2.4 : 2.4);
     if (f || s) player.cmd = null;
     player.backward = f < 0;
-    const mul = f ? (f < 0 ? 0.45 : 1) * (player.block || player.atk ? 0.45 : state.run ? 1.35 : 0.55) * (player.carrying ? 0.65 : 1) : 0;
+    const mul = f ? (f < 0 ? 0.45 : 1) * (player.block || player.atk ? 0.45 : state.run ? (player.tired ? 0.8 : 1.35) : 0.55) * (player.carrying ? 0.65 : 1) : 0;
     accelerate(player, Math.sin(player.yaw) * f * speedOf(player) * mul, Math.cos(player.yaw) * f * speedOf(player) * mul, dt);
     if (player.draw >= 0) player.draw += dt;
     player.working = false;
@@ -479,7 +481,7 @@ function updatePlayer(dt) {
   const combat = player.block || player.atk || player.draw >= 0;
   // vue suivie, arme dégainée : le personnage regarde vers le curseur
   const aimYaw = follow && !player.sheathed && mouse.ground ? Math.atan2(mouse.ground.x - player.pos.x, mouse.ground.z - player.pos.z) : null;
-  const mul = len > 0 ? (combat ? 0.45 : state.run ? 1.35 : 0.55) * (player.carrying ? 0.65 : 1) : 0;
+  const mul = len > 0 ? (combat ? 0.45 : state.run ? (player.tired ? 0.8 : 1.35) : 0.55) * (player.carrying ? 0.65 : 1) : 0;
   if (len > 0) { mx /= len; mz /= len; }
   accelerate(player, mx * speedOf(player) * mul, mz * speedOf(player) * mul, dt);
   if (len > 0) {
@@ -489,6 +491,52 @@ function updatePlayer(dt) {
   }
   if (aimYaw != null) player.yaw = turnToward(player.yaw, aimYaw, dt * 14);
   else if (combat && !follow) player.yaw = turnToward(player.yaw, cam.yaw, dt * 14);
+}
+
+// ---------- Survie : faim, soif, endurance ----------
+const HUNGER_RATE = 75 / DAY_LENGTH, THIRST_RATE = 120 / DAY_LENGTH;
+const waterMax = () => 4 + team().length * 2;
+const nearWater = u => waterDist(u.pos.x, u.pos.z) < 2.5;
+function updateSurvival(dt) {
+  if (state.water == null) state.water = waterMax();
+  const town = settlementAt(player.pos);
+  const friendly = town && !playerHostileTo(town.faction) && town.type !== 'repaire';
+  // on remplit les outres en ville ou au bord de l'eau
+  if ((friendly || nearWater(player)) && state.water < waterMax()) {
+    state.water = waterMax();
+    if (!state.refillMsg || (state.clock || 0) - state.refillMsg > 60) { state.refillMsg = state.clock || 0.01; logMsg(friendly ? '💧 Tu remplis tes outres au puits.' : '💧 Tu remplis tes outres à la rivière.'); }
+  }
+  let starving = false;
+  for (const u of team()) {
+    if (u.down > 0) continue;
+    u.hunger = Math.max(0, (u.hunger ?? 100) - HUNGER_RATE * dt);
+    u.thirst = Math.max(0, (u.thirst ?? 100) - THIRST_RATE * dt * (biomeAt(u.pos.x, u.pos.z) === 'desert' ? 1.3 : 1));
+    if (nearWater(u) || (friendly && d2(u.pos, player.pos) < 60)) u.thirst = Math.min(100, u.thirst + 25 * dt);
+    if (u.hunger < 40 && state.goods.food >= 1) {
+      state.goods.food -= 1; u.hunger = Math.min(100, u.hunger + 60);
+      if (u === player) logMsg('🍖 Tu manges un morceau.');
+    }
+    if (u.thirst < 40 && state.water >= 1) {
+      state.water -= 1; u.thirst = Math.min(100, u.thirst + 50);
+      if (u === player) logMsg('💧 Tu bois une gorgée.');
+    }
+    if (u.hunger <= 0 || u.thirst <= 0) {
+      starving = true;
+      u.hp -= 0.5 * dt;
+      if (Math.random() < dt) drawBar(u);
+      if (u.hp < 1) u.hp = 1;
+    }
+  }
+  if (starving && (!state.starveMsg || (state.clock || 0) - state.starveMsg > 40)) {
+    state.starveMsg = state.clock || 0.01;
+    logMsg(state.goods.food < 1 ? '⚠ Vous avez faim : achète des vivres au marché.' : '⚠ Vous avez soif : trouve une rivière, un lac ou une ville.', 'warn');
+  }
+  // endurance : la course fatigue, la marche et l'arrêt reposent
+  const p = player;
+  const running = state.run && p.moving > 0.6 && !p.dodge;
+  p.stamina = clamp((p.stamina ?? 100) + (running ? -2.6 * (1 - sk(p, 'athletisme') * 0.005) : p.moving > 0.1 ? 9 : 16) * dt, 0, 100);
+  if (p.stamina <= 0) p.tired = true;
+  if (p.tired && p.stamina > 35) p.tired = false;
 }
 
 // accélération et freinage doux : le personnage a du poids
@@ -536,27 +584,21 @@ function update(dt) {
   for (const u of team()) {
     if (u.down > 0) continue;
     const s = settlementAt(u.pos);
-    const regen = s && !playerHostileTo(s.faction) && !u.jailed ? 3 : (state.goods.food > 0 ? 0.3 : 0);
+    const fed = (u.hunger ?? 100) > 15 && (u.thirst ?? 100) > 15;
+    const regen = s && !playerHostileTo(s.faction) && !u.jailed ? 3 : (fed ? 0.3 : 0);
     const before = Math.ceil(u.hp);
     u.hp = Math.min(u.maxHp, u.hp + regen * dt);
     if (Math.ceil(u.hp) !== before) drawBar(u);
   }
+  updateSurvival(dt);
 
-  // jours et nourriture
+  // jours
   state.dayTimer += dt;
   if (state.dayTimer >= DAY_LENGTH) {
     state.dayTimer = 0;
     state.day++;
-    const need = team().length;
-    if (state.goods.food >= need) {
-      state.goods.food -= need;
-      logMsg(`Jour ${state.day}. Vous mangez ${need} vivres.`);
-      collectTaxes();
-    } else {
-      state.goods.food = 0;
-      logMsg(`Jour ${state.day}. Pas assez de vivres : tout le monde a faim (-20 PV).`, 'warn');
-      for (const u of team()) { if (u.down > 0) continue; u.hp -= 20; drawBar(u); if (u.hp <= 0) kill(u, null); }
-    }
+    logMsg(`☀️ Jour ${state.day}.`);
+    collectTaxes();
   }
 
   const town = settlementAt(player.pos);

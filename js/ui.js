@@ -84,8 +84,7 @@ function renderHud() {
   $('arrowsCount').textContent = state.goods.arrows;
   $('cargo').textContent = `${Math.round(weightUsed())}/${weightMax()}`;
   $('cargo').parentElement.classList.toggle('bad', overloaded());
-  $('day').textContent = state.day;
-  $('biome').textContent = BIOMES[biomeAt(player.pos.x, player.pos.z)].name;
+  renderSurvivalHud();
   $('speed').textContent = [state.run ? '🏃 Course' : '', state.timeScale > 1 ? `⏩ ×${state.timeScale}` : '', state.storm > 0 ? '🌪 Tempête' : '', { rts: '🎥 Vue tactique', tps: '🎥 Vue épaule', suivie: '' }[settings.camMode] || ''].filter(Boolean).join(' · ');
   $('allegiance').innerHTML = state.allegiance ? `${flagImg(F(state.allegiance), 16)} ${esc(F(state.allegiance).name)}` : '';
   $('pName').textContent = player.name + (metier(player) ? ` · ${metier(player)}` : '');
@@ -101,9 +100,15 @@ function renderHud() {
       <div class="bar"><div style="width:${Math.max(0, u.hp / u.maxHp * 100)}%"></div></div></div>`).join('') +
       '<small class="note">Clic sur un nom ou C : changer de personnage</small>'
     : '<small>Tu voyages seul. Recrute à la taverne.</small>';
-  const orders = { follow: 'Suivre', charge: 'Charger', hold: 'Tenir', close: 'Groupés' };
-  $('ordersBar').innerHTML = sq.length ? Object.entries({ 1: 'follow', 2: 'charge', 3: 'hold', 4: 'close' }).map(([k, o]) =>
-    `<span class="${state.order === o ? 'on' : ''}"><b>${k}</b> ${orders[o]}</span>`).join('') + '<span><b>5</b> Attaquer ma cible</span><span><b>V</b> Vue tactique</span>' : '';
+  // barre d'actions : ordres à l'escouade, arme, arc, soins, vivres, eau
+  const slot = (key, icon, label, on, count) => `<div class="slot ${on ? 'on' : ''}">${key ? `<b>${key}</b>` : ''}<i>${icon}</i>${label}${count != null ? `<em>${count}</em>` : ''}</div>`;
+  const orders = [['1', '🚩', 'Suivre', 'follow'], ['2', '⚔️', 'Charger', 'charge'], ['3', '🛡️', 'Tenir', 'hold'], ['4', '👥', 'Groupés', 'close']];
+  $('hotbar').innerHTML = (sq.length ? orders.map(([k, i, l, o]) => slot(k, i, l, state.order === o)).join('') + slot('5', '🎯', 'Cible') + '<span class="gap"></span>' : '') +
+    slot('X', player.mode === 'bow' ? '🏹' : isFists(player) ? '✊' : '🗡️', player.mode === 'bow' ? 'Arc' : isFists(player) ? 'Poings' : 'Arme', !player.sheathed) +
+    slot('R', player.sheathed ? '🫳' : '⚔️', player.sheathed ? 'Dégainer' : 'Ranger') +
+    slot('H', '🩹', 'Soins', false, state.goods.kits || 0) +
+    slot('', '🍖', 'Vivres', false, Math.floor(state.goods.food)) +
+    slot('', '💧', 'Outres', false, `${state.water ?? 0}/${waterMax()}`);
   $('orderLabel').textContent = '';
   const pr = $('prompt');
   let txt = '';
@@ -127,6 +132,48 @@ function renderHud() {
   pr.textContent = txt;
   pr.classList.toggle('hidden', !txt);
 }
+
+// ---------- Interface de survie : jauges, objectifs, région, heure ----------
+const OBJECTIVES = [
+  ['food', 'Trouve de la nourriture', 'Achète des vivres au marché ou chasse', () => state.goods.food >= 6],
+  ['water', 'Trouve une rivière ou un lac', 'Remplis tes outres au bord de l\'eau', () => state.obj && state.obj.river],
+  ['weapon', 'Trouve une meilleure arme', 'Forgeron, butin ou bazar', () => state.obj && weaponOf(player).dmg > state.obj.weapon0],
+  ['ally', 'Recrute un compagnon', 'À la taverne d\'une ville', () => squad().length > 0],
+  ['camp', 'Monte ton camp', 'Touche B, puis pose une palissade', () => !!state.base],
+];
+function hourText() {
+  const ph = state.dayTimer / DAY_LENGTH;
+  const h = ((12 + (ph - 0.202) * 24) % 24 + 24) % 24;
+  return `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.floor((h % 1) * 60 / 5) * 5).padStart(2, '0')}`;
+}
+function regionName(x, z) {
+  const b = BIOMES[biomeAt(x, z)].name;
+  const s = nearestSettlement({ x, z }, () => true);
+  if (!s || d2(s, { x, z }) > 360) return b + ' sauvage';
+  return `${b} ${/^[aeiouyéèêâîôûh]/i.test(s.name) ? "d'" : 'de '}${s.name}`;
+}
+function renderSurvivalHud() {
+  if (!state.obj) state.obj = { weapon0: weaponOf(player).dmg };
+  if (waterDist(player.pos.x, player.pos.z) < 3) state.obj.river = true;
+  const set = (id, v) => { $(id).style.width = clamp(v, 0, 100) + '%'; $(id).parentElement.parentElement.classList.toggle('low', v < 25); };
+  set('vHp', player.hp / player.maxHp * 100);
+  set('vFood', player.hunger ?? 100);
+  set('vWater', player.thirst ?? 100);
+  set('vStam', player.stamina ?? 100);
+  $('vNote').textContent = `${Math.ceil(Math.max(0, player.hp))}/${player.maxHp} PV · 🍖 ${Math.floor(state.goods.food)} vivres · 💧 ${state.water ?? 0} gorgées`;
+  $('region').textContent = regionName(player.pos.x, player.pos.z);
+  $('clock').textContent = `☀️ Jour ${state.day} · ${hourText()}`;
+  // objectifs : premiers pas de survie, puis les tâches du journal
+  for (const [k, , , done] of OBJECTIVES) if (!state.obj[k] && done()) { state.obj[k] = true; logMsg(`✓ Objectif atteint : ${OBJECTIVES.find(o => o[0] === k)[1]}.`, 'news'); }
+  const todo = OBJECTIVES.filter(o => !state.obj[o[0]]);
+  const quests = (state.quests || []).filter(q => !q.done).slice(0, 3);
+  let html = '';
+  if (todo.length) html += `<h4>🏕 Survie</h4><div class="ol">${OBJECTIVES.map(([k, t, hint]) => `<div class="${state.obj[k] ? 'ok' : ''}">${t}${state.obj[k] ? '' : `<small>${hint}</small>`}</div>`).join('')}</div>`;
+  if (quests.length) html += `<h4>📜 Tâches</h4><div class="ol">${quests.map(q => `<div>${esc(q.text)}<small>${q.type === 'hunt' ? `${q.count}/${q.need} · ` : ''}${q.ready ? 'retourne voir ' + esc(q.giver) : q.reward + ' 💰'}</small></div>`).join('')}</div>`;
+  if (!html) html = '<h4>🧭 Libre</h4><div class="ol"><small>Parle aux habitants (E) pour trouver du travail.</small></div>';
+  $('objectives').innerHTML = html;
+}
+$('helpBtn').addEventListener('click', () => $('controls').classList.toggle('hidden'));
 
 $('squadList').addEventListener('click', e => {
   const m = e.target.closest('[data-ctl]');
@@ -169,7 +216,6 @@ function drawMinimap() {
   const toM = (x, z) => [S / 2 + (x - px) * k, S / 2 + (z - pz) * k];
   g.clearRect(0, 0, S, S);
   g.save();
-  g.beginPath(); g.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2); g.clip();
   if (!terrainImg || terrainSeed !== state.seed) { terrainImg = buildTerrainImg(); terrainSeed = state.seed; }
   const sx = (px - R + HALF) / WORLD * 300, sz = (pz - R + HALF) / WORLD * 300, sw = 2 * R / WORLD * 300;
   g.fillStyle = '#8a7a60'; g.fillRect(0, 0, S, S);
@@ -484,7 +530,7 @@ $('town').addEventListener('click', e => {
     logMsg('Tu paies la caution. Le geôlier va libérer tes compagnons.');
   } else if ('rest' in d) {
     state.money -= 10;
-    for (const u of team()) { u.hp = u.maxHp; u.down = 0; drawBar(u); }
+    for (const u of team()) { u.hp = u.maxHp; u.down = 0; u.thirst = 100; drawBar(u); }
     // on dort jusqu'au matin
     const phase = state.dayTimer / DAY_LENGTH;
     state.dayTimer = phase < 0.05 ? state.dayTimer : 0;
@@ -782,12 +828,19 @@ function buildTerrainImg() {
   const img = g.createImageData(300, 300);
   for (let j = 0; j < 300; j++) for (let i = 0; i < 300; i++) {
     const x = -HALF + (i + 0.5) / 300 * WORLD, z = -HALF + (j + 0.5) / 300 * WORLD;
-    const h = heightAt(x, z), b = BIOMES[biomeAt(x, z)].color;
+    const h = heightAt(x, z);
+    const b = waterDepthAt(x, z) > 0 ? [0.27, 0.56, 0.78] : BIOMES[biomeAt(x, z)].color;
     const shade = clamp(1 + (heightAt(x + 4, z + 4) - h) * -0.05, 0.6, 1.3);
     const o = (j * 300 + i) * 4;
     img.data[o] = b[0] * 255 * shade; img.data[o + 1] = b[1] * 255 * shade; img.data[o + 2] = b[2] * 255 * shade; img.data[o + 3] = 255;
   }
   g.putImageData(img, 0, 0);
+  // routes, ponts, mesas
+  const toI = (x, z) => [(x + HALF) / WORLD * 300, (z + HALF) / WORLD * 300];
+  g.strokeStyle = 'rgba(120, 90, 60, .75)'; g.lineWidth = 1;
+  for (const r of ROADS) { g.beginPath(); r.forEach((p, k) => { const [a, c] = toI(p.x, p.z); k ? g.lineTo(a, c) : g.moveTo(a, c); }); g.stroke(); }
+  g.fillStyle = '#a8502e';
+  for (const m of MESAS) { const [a, c] = toI(m.x, m.z); g.beginPath(); g.arc(a, c, m.r / WORLD * 300, 0, Math.PI * 2); g.fill(); }
   return cv;
 }
 function buildTerritoryImg() {
@@ -993,14 +1046,15 @@ $('settings').addEventListener('click', e => { if (e.target.closest('[data-close
 function unitSave(u) {
   return { name: u.name, look: u.look, equip: u.equip, inv: u.inv || [], hp: Math.max(1, Math.round(u.hp)), maxHp: u.maxHp,
     str: u.str, agi: u.agi, speed: u.speedBase, level: u.level, xp: u.xp, x: u.pos.x, z: u.pos.z, arrows: u.arrows,
-    archer: !!u.archer, sworn: !!u.sworn, pid: u.pid || null, stats: u.stats, node: u.assignedNode, skills: u.skills, jailed: u.jailed, fugitive: u.fugitive, oldId: u.id };
+    archer: !!u.archer, sworn: !!u.sworn, pid: u.pid || null, stats: u.stats, node: u.assignedNode, skills: u.skills, jailed: u.jailed, fugitive: u.fugitive, oldId: u.id,
+    hunger: Math.round(u.hunger ?? 100), thirst: Math.round(u.thirst ?? 100) };
 }
 function saveGame(silent) {
   if (state.mode !== 'play' || state.ko > 0) return false;
   const strip = f => { const o = {}; for (const k in f) if (!k.startsWith('_')) o[k] = f[k]; return o; };
   const data = {
     v: 2, seed: state.seed, uid: _uid, player: unitSave(player), squad: squad().map(unitSave),
-    money: state.money, goods: state.goods, day: state.day, dayTimer: state.dayTimer, kills: state.kills, order: state.order,
+    money: state.money, goods: state.goods, water: state.water, day: state.day, dayTimer: state.dayTimer, kills: state.kills, order: state.order,
     rep: state.rep, allegiance: state.allegiance, relations: state.relations, warSince: state.warSince, clock: state.clock || 0,
     factions: Object.values(state.factions).map(strip),
     settlements: state.settlements.map(s => ({ name: s.name, x: s.x, z: s.z, faction: s.faction, type: s.type, capital: s.capital,
@@ -1010,7 +1064,7 @@ function saveGame(silent) {
       home: p.home, target: p.target, cargo: p.cargo || null, members: p.mat ? p.units.filter(u => !u.dead).map(u => u.pid || null) : p.members || null,
       general: p.general || null, name: p.name })),
     people: state.people || null,
-    chronicle: state.chronicle, trades: state.trades, quests: state.quests || [], base: baseSaveData(), saved: Date.now(), jail: state.jail, tollPaid: state.tollPaid, tollAngry: state.tollAngry,
+    chronicle: state.chronicle, trades: state.trades, quests: state.quests || [], obj: state.obj || null, base: baseSaveData(), saved: Date.now(), jail: state.jail, tollPaid: state.tollPaid, tollAngry: state.tollAngry,
   };
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -1034,7 +1088,7 @@ function loadGame(data) {
     money: data.money, goods: { ...state.goods, ...data.goods }, day: data.day, dayTimer: data.dayTimer, kills: data.kills,
     order: data.order || 'follow', rep: data.rep, allegiance: data.allegiance, relations: data.relations,
     warSince: data.warSince || {}, clock: data.clock || 0, chronicle: data.chronicle || [], trades: data.trades || [],
-    tollPaid: data.tollPaid || {}, tollAngry: data.tollAngry || {}, quests: data.quests || [],
+    tollPaid: data.tollPaid || {}, tollAngry: data.tollAngry || {}, quests: data.quests || [], water: data.water ?? null, obj: data.obj || null,
   });
   for (const sd of data.settlements) {
     const s = settlementByName(sd.name);
@@ -1063,9 +1117,11 @@ function loadGame(data) {
   if (player) removeUnit(player);
   player = createPlayer(data.player);
   player.inv = data.player.inv || [];
+  player.hunger = data.player.hunger ?? 100; player.thirst = data.player.thirst ?? 100;
   for (const m of data.squad) {
     const u = makeUnit({ faction: 'player', x: m.x, z: m.z, name: m.name, look: m.look, equip: m.equip, hp: m.hp, maxHp: m.maxHp,
       str: m.str, agi: m.agi, speed: m.speed, level: m.level, xp: m.xp, arrows: m.arrows, blockChance: 0.3, skills: m.skills });
+    u.hunger = m.hunger ?? 100; u.thirst = m.thirst ?? 100;
     u.archer = m.archer; u.sworn = m.sworn; u.assignedNode = m.node != null ? m.node : null;
     if (m.pid && personById(m.pid)) { u.pid = m.pid; personById(m.pid).skills = u.skills; }
     dressUnit(u);

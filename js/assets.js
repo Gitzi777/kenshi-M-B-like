@@ -351,7 +351,7 @@ function dressSkinned(u) {
 
 // ---------- Rendu « cel shading » doux (inspiré des grands jeux d'aventure) ----------
 const TOON_GRADIENT = (() => {
-  const d = new Uint8Array([60, 60, 60, 255, 135, 135, 135, 255, 205, 205, 205, 255, 255, 255, 255, 255]);
+  const d = new Uint8Array([78, 78, 78, 255, 145, 145, 145, 255, 210, 210, 210, 255, 255, 255, 255, 255]);
   const t = new T.DataTexture(d, 4, 1, T.RGBAFormat);
   t.minFilter = t.magFilter = T.LinearFilter;
   t.generateMipmaps = false;

@@ -401,6 +401,9 @@ function speedOf(u) {
   let s = (u.speedBase + (IT(u.equip.armor) && IT(u.equip.armor).speed || 0)) * (1 + sk(u, 'athletisme') * 0.0025);
   if (isPlayerSide(u) && typeof overloaded === 'function' && overloaded()) s *= 0.6;
   if (isPlayerSide(u) && state.storm > 0 && biomeAt(u.pos.x, u.pos.z) === 'desert') s *= 0.8;
+  // on avance moins vite dans l'eau
+  const wd = waterDepthAt(u.pos.x, u.pos.z);
+  if (wd > 0.2) s *= 1 - Math.min(0.5, wd * 0.45);
   return s;
 }
 const cooldownOf = u => weaponOf(u).cd * (1 - u.agi * 0.03) * (1 - sk(u, isFists(u) ? 'poings' : 'attaque') * 0.002);
@@ -1291,7 +1294,7 @@ function updateUnits(dt) {
     u.knock.x *= 0.85; u.knock.z *= 0.85;
   }
   separate();
-  for (const u of units) if (!u.dead && !u.carriedBy) { collide(u); u.pos.y = heightAt(u.pos.x, u.pos.z); }
+  for (const u of units) if (!u.dead && !u.carriedBy) { collide(u); u.pos.y = groundAt(u.pos.x, u.pos.z); }
   for (let i = units.length - 1; i >= 0; i--) {
     if (units[i].dead && units[i].deadTime > 120) removeUnit(units[i]);
   }

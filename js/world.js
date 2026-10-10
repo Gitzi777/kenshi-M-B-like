@@ -74,7 +74,7 @@ scene.add(worldGroup);
 // ---------- Relief et biomes ----------
 let elevN = makeNoise(1), moistN = makeNoise(2), detailN = makeNoise(3);
 let FLAT_SPOTS = [];
-const GRID_N = 240, GRID_SIZE = WORLD + 300, CELL = GRID_SIZE / GRID_N;
+const GRID_N = 300, GRID_SIZE = WORLD + 300, CELL = GRID_SIZE / GRID_N;
 let hgrid = new Float32Array((GRID_N + 1) * (GRID_N + 1));
 
 const elevAt = (x, z) => elevN(x / 260, z / 260);
@@ -92,8 +92,177 @@ function rawHeight(x, z) {
   h += smooth(0.6, 0.8, e) * 42;
   return h;
 }
+// ---------- Rivières, lacs, ponts ----------
+// une rivière : une ligne de points { x, z, h } (h = niveau du lit avant creusement)
+let RIVERS = [], LAKES = [], BRIDGES = [];
+const RIVER_W = 12, RIVER_DEPTH = 1.3, WATER_DROP = 0.75;
+let riverGrid = new Map();
+const RIV_CELL = 40, RIV_REACH = 95;
+function planWater(seed) {
+  const rng = mulberry32(seed + 555);
+  RIVERS = []; LAKES = []; BRIDGES = []; riverGrid = new Map();
+  const nR = 1 + (rng() < 0.7 ? 1 : 0);
+  for (let r = 0; r < nR; r++) {
+    // part du bord du monde et suit les terres basses en serpentant
+    const a0 = rng() * Math.PI * 2 + r * Math.PI;
+    let x = Math.cos(a0) * (HALF + 140), z = Math.sin(a0) * (HALF + 140);
+    const goal = a0 + Math.PI + (rng() - 0.5) * 1.6;
+    let head = Math.atan2(Math.sin(goal) * (HALF + 140) - z, Math.cos(goal) * (HALF + 140) - x);
+    const pts = [];
+    for (let i = 0; i < 420; i++) {
+      pts.push({ x, z });
+      if (i > 20 && Math.hypot(x, z) > HALF + 150) break;
+      let best = head, bestE = 1e9;
+      for (const da of [-0.32, -0.16, 0, 0.16, 0.32]) {
+        const a = head + da;
+        const e = elevAt(x + Math.cos(a) * 70, z + Math.sin(a) * 70) + Math.abs(da) * 0.05 + rng() * 0.02;
+        if (e < bestE) { bestE = e; best = a; }
+      }
+      const toGoal = Math.atan2(Math.sin(goal) * (HALF + 160) - z, Math.cos(goal) * (HALF + 160) - x);
+      head = best + Math.atan2(Math.sin(toGoal - best), Math.cos(toGoal - best)) * 0.12;
+      x += Math.cos(head) * 10; z += Math.sin(head) * 10;
+    }
+    // niveau de l'eau : plancher des hauteurs voisines, lissé
+    const raw = pts.map(p => rawHeight(p.x, p.z));
+    let hs = raw.map((_, i) => Math.min(...raw.slice(Math.max(0, i - 6), i + 7)));
+    for (let pass = 0; pass < 4; pass++) hs = hs.map((_, i) => (hs[Math.max(0, i - 2)] + hs[Math.max(0, i - 1)] + hs[i] + hs[Math.min(hs.length - 1, i + 1)] + hs[Math.min(hs.length - 1, i + 2)]) / 5);
+    pts.forEach((p, i) => { p.h = Math.min(hs[i], raw[i]) - 0.4; });
+    RIVERS.push(pts);
+    const ri = RIVERS.length - 1;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const cx0 = Math.floor((Math.min(a.x, b.x) - RIV_REACH) / RIV_CELL), cx1 = Math.floor((Math.max(a.x, b.x) + RIV_REACH) / RIV_CELL);
+      const cz0 = Math.floor((Math.min(a.z, b.z) - RIV_REACH) / RIV_CELL), cz1 = Math.floor((Math.max(a.z, b.z) + RIV_REACH) / RIV_CELL);
+      for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) {
+        const k = cx + ',' + cz;
+        if (!riverGrid.has(k)) riverGrid.set(k, []);
+        riverGrid.get(k).push([ri, i]);
+      }
+    }
+  }
+  // lacs dans les creux, loin des montagnes
+  for (let t = 0; t < 400 && LAKES.length < 3; t++) {
+    const x = (rng() - 0.5) * (WORLD - 200), z = (rng() - 0.5) * (WORLD - 200);
+    const e = elevAt(x, z);
+    if (e > 0.47 || e < 0.3) continue;
+    if (LAKES.some(l => Math.hypot(l.x - x, l.z - z) < 300) || riverInfo(x, z).d < 120) continue;
+    const R = 26 + rng() * 22;
+    // le niveau du lac est sous le point le plus bas de ses rives
+    let rim = 1e9;
+    for (let k = 0; k < 24; k++) rim = Math.min(rim, rawHeight(x + Math.cos(k / 24 * Math.PI * 2) * R * 1.3, z + Math.sin(k / 24 * Math.PI * 2) * R * 1.3));
+    if (rawHeight(x, z) - rim > 5) continue;
+    LAKES.push({ x, z, R, h: Math.min(rim, rawHeight(x, z)) - 1.1, nz: makeNoise(seed + t), ph: rng() * 6 });
+  }
+}
+// distance à la rivière la plus proche et niveau de son eau à cet endroit
+const _ri = { d: 1e9, h: 0, t: 0, dx: 1, dz: 0 };
+function riverInfo(x, z) {
+  _ri.d = 1e9;
+  const l = riverGrid.get(Math.floor(x / RIV_CELL) + ',' + Math.floor(z / RIV_CELL));
+  if (!l) return _ri;
+  for (const [ri, i] of l) {
+    const a = RIVERS[ri][i], b = RIVERS[ri][i + 1];
+    const vx = b.x - a.x, vz = b.z - a.z, L2 = vx * vx + vz * vz || 1;
+    const t = clamp(((x - a.x) * vx + (z - a.z) * vz) / L2, 0, 1);
+    const d = Math.hypot(x - a.x - vx * t, z - a.z - vz * t);
+    if (d < _ri.d) { _ri.d = d; _ri.h = a.h + (b.h - a.h) * t; _ri.dx = vx; _ri.dz = vz; }
+  }
+  return _ri;
+}
+const lakeRadius = (l, x, z) => l.R * (0.82 + l.nz(Math.cos(Math.atan2(z - l.z, x - l.x) + l.ph) * 1.3 + 2, Math.sin(Math.atan2(z - l.z, x - l.x) + l.ph) * 1.3 + 2) * 0.4);
+// distance au bord de l'eau (négative dans l'eau)
+function waterDist(x, z) {
+  let best = riverInfo(x, z).d - RIVER_W * 0.7;
+  for (const l of LAKES) {
+    const d = Math.hypot(x - l.x, z - l.z);
+    if (d < l.R * 1.5 + 60) best = Math.min(best, d - lakeRadius(l, x, z));
+  }
+  return best;
+}
+// creuse le lit des rivières et des lacs (ne fait que descendre le sol)
+function carveWater(x, z, h) {
+  const r = riverInfo(x, z);
+  if (r.d < RIV_REACH) {
+    const prof = 1 - smooth(0, RIVER_W, r.d);
+    const target = r.h + WATER_DROP - RIVER_DEPTH * prof + Math.max(0, r.d - RIVER_W * 0.8) * 0.38;
+    if (target < h) h = target;
+  }
+  for (const l of LAKES) {
+    const d = Math.hypot(x - l.x, z - l.z);
+    if (d > l.R * 1.5 + 70) continue;
+    const R = lakeRadius(l, x, z);
+    const target = l.h + WATER_DROP - 2.6 * (1 - smooth(0, R, d)) + Math.max(0, d - R * 0.85) * 0.3;
+    if (target < h) h = target;
+  }
+  return h;
+}
+// ponts : là où une route traverse une rivière, la route passe au-dessus
+function planBridges() {
+  BRIDGES = [];
+  for (const road of ROADS) {
+    for (let i = 0; i < road.length - 1; i++) {
+      const p = road[i], q = road[i + 1];
+      // point du segment le plus proche de l'eau
+      let mx = 0, mz = 0, bd = 1e9;
+      for (let k = 0; k <= 8; k++) {
+        const x = p.x + (q.x - p.x) * k / 8, z = p.z + (q.z - p.z) * k / 8, d = riverInfo(x, z).d;
+        if (d < bd) { bd = d; mx = x; mz = z; }
+      }
+      if (bd > 3 || BRIDGES.some(b => Math.hypot(b.x - mx, b.z - mz) < 40)) continue;
+      const r = riverInfo(mx, mz);
+      // le pont est perpendiculaire à la rivière, dans le sens de la route
+      const L = Math.hypot(r.dx, r.dz) || 1;
+      let ax = -r.dz / L, az = r.dx / L;
+      if (ax * (q.x - p.x) + az * (q.z - p.z) < 0) { ax = -ax; az = -az; }
+      const half = RIVER_W + 5;
+      const bank = Math.max(rawHeight(mx + ax * half, mz + az * half), rawHeight(mx - ax * half, mz - az * half));
+      const deck = Math.max(r.h + WATER_DROP + 1.5, Math.min(bank, r.h + 4));
+      BRIDGES.push({ x: mx, z: mz, ax, az, half, deck, water: r.h + WATER_DROP });
+      // la route passe droit sur le pont : on remplace les points proches par les deux têtes de pont
+      const reach = half + 10;
+      let i0 = i, i1 = i + 1;
+      while (i0 > 1 && Math.hypot(road[i0].x - mx, road[i0].z - mz) < reach) i0--;
+      while (i1 < road.length - 2 && Math.hypot(road[i1].x - mx, road[i1].z - mz) < reach) i1++;
+      const heads = [{ x: mx - ax * (half + 4), z: mz - az * (half + 4) }, { x: mx + ax * (half + 4), z: mz + az * (half + 4) }];
+      road.splice(i0 + 1, i1 - i0 - 1, ...heads);
+      i = i0 + 2;
+    }
+  }
+  indexRoads();
+}
+function bridgeHeight(x, z, h) {
+  for (const b of BRIDGES) {
+    const dx = x - b.x, dz = z - b.z;
+    const along = Math.abs(dx * b.ax + dz * b.az), across = Math.abs(dx * b.az - dz * b.ax);
+    if (across > 2.7 || along > b.half + 24) continue;
+    const ramp = along < b.half + 2 ? b.deck : b.deck - (along - b.half - 2) * 0.35;
+    if (ramp > h) h = ramp;
+  }
+  return h;
+}
+// niveau de l'eau (grille précalculée) ; -1e4 = pas d'eau
+let wgrid = null;
+function buildWaterGrid() {
+  wgrid = new Float32Array((GRID_N + 1) * (GRID_N + 1)).fill(-1e4);
+  for (let j = 0; j <= GRID_N; j++) for (let i = 0; i <= GRID_N; i++) {
+    const x = -GRID_SIZE / 2 + i * CELL, z = -GRID_SIZE / 2 + j * CELL;
+    const r = riverInfo(x, z);
+    let w = r.d < RIVER_W + 3 ? r.h + WATER_DROP : -1e4;
+    for (const l of LAKES) if (Math.hypot(x - l.x, z - l.z) < lakeRadius(l, x, z) + 4) w = Math.max(w, l.h + WATER_DROP);
+    wgrid[j * (GRID_N + 1) + i] = w;
+  }
+}
+function waterLevelAt(x, z) {
+  if (!wgrid) return -1e4;
+  const i = Math.round(clamp((x + GRID_SIZE / 2) / CELL, 0, GRID_N)), j = Math.round(clamp((z + GRID_SIZE / 2) / CELL, 0, GRID_N));
+  return wgrid[j * (GRID_N + 1) + i];
+}
+const waterDepthAt = (x, z) => waterLevelAt(x, z) - groundAt(x, z);
+// sol où l'on marche : le terrain, ou le tablier d'un pont
+const groundAt = (x, z) => BRIDGES.length ? bridgeHeight(x, z, heightAt(x, z)) : heightAt(x, z);
+
 function flatHeight(x, z) {
-  let h = rawHeight(x, z);
+  let h = carveWater(x, z, rawHeight(x, z));
   for (const s of FLAT_SPOTS) {
     const d = Math.hypot(x - s.x, z - s.z);
     if (d < s.r + 40) h += (s.h - h) * (1 - smooth(s.r + 2, s.r + 40, d));
@@ -421,10 +590,12 @@ function generateWorld(seed, keepFactions = null) {
   worldGroup = new T.Group();
   scene.add(worldGroup);
   obstacles = []; obsGrid = new Map(); wallSegs = []; segGrid = new Map();
-  Object.assign(state, { seed, settlements: [], nodes: [], parties: [], chronicle: [], trades: [], factions: {}, relations: {}, warSince: {}, rep: {} });
+  Object.assign(state, { seed, settlements: [], nodes: [], parties: [], chronicle: [], trades: [], factions: {}, relations: {}, warSince: {}, rep: {}, obj: null, water: null });
 
   const rng = mulberry32(seed);
   elevN = makeNoise(seed); moistN = makeNoise(seed + 101); detailN = makeNoise(seed + 7);
+  BRIDGES = []; wgrid = null;
+  planWater(seed);
 
   // factions
   const nf = 3 + Math.floor(rng() * 2);
@@ -445,7 +616,7 @@ function generateWorld(seed, keepFactions = null) {
   // emplacements des villes
   const sites = [];
   const usedNames = new Set();
-  const okSite = (x, z, minD) => Math.abs(x) < HALF - 70 && Math.abs(z) < HALF - 70 && elevAt(x, z) < 0.6 &&
+  const okSite = (x, z, minD) => Math.abs(x) < HALF - 70 && Math.abs(z) < HALF - 70 && elevAt(x, z) < 0.6 && waterDist(x, z) > 85 &&
     sites.every(s => Math.hypot(s.x - x, s.z - z) > minD);
   const uniqueName = () => { let n; do { n = genName(rng); } while (usedNames.has(n)); usedNames.add(n); return n; };
   for (const f of majors) {
@@ -490,7 +661,7 @@ function generateWorld(seed, keepFactions = null) {
   const nodeSpots = [];
   for (let t = 0; t < 3000 && nodeSpots.length < 60; t++) {
     const x = (rng() - 0.5) * (WORLD - 80), z = (rng() - 0.5) * (WORLD - 80);
-    if (sites.some(s => Math.hypot(s.x - x, s.z - z) < 80) || nodeSpots.some(n => Math.hypot(n.x - x, n.z - z) < 55)) continue;
+    if (sites.some(s => Math.hypot(s.x - x, s.z - z) < 80) || nodeSpots.some(n => Math.hypot(n.x - x, n.z - z) < 55) || waterDist(x, z) < 28) continue;
     const b = biomeAt(x, z);
     const e = elevAt(x, z);
     let type = null;
@@ -502,13 +673,17 @@ function generateWorld(seed, keepFactions = null) {
     if (type) nodeSpots.push({ x, z, type });
   }
   FLAT_SPOTS.push(...nodeSpots.map(n => ({ x: n.x, z: n.z, r: 10, h: rawHeight(n.x, n.z) })));
-  buildHeightGrid();
-  rebuildTerrainHeights();
 
   planRoads(sites.map(s => ({ ...s, r: { camp: 26, repaire: 18 }[s.type] || 44, gate: Math.atan2(-s.z, -s.x) })));
+  planBridges();
+  buildHeightGrid();
+  buildWaterGrid();
   TERRAIN_SPOTS = { sites: sites.map(s => ({ x: s.x, z: s.z, r: { camp: 26, repaire: 18 }[s.type] || 44 })), nodes: nodeSpots };
   rebuildTerrainHeights();
   buildRoads();
+  buildWater();
+  buildBridges();
+  buildMesas(rng, sites, nodeSpots);
   buildDecor(rng, sites, nodeSpots);
   for (const s of sites) makeSettlement(s);
   for (const ns of nodeSpots) {
@@ -536,9 +711,9 @@ function buildTerrain() {
 }
 // palette du sol (sRGB) : chaque biome se fond dans le suivant
 const GROUND = {
-  desert: lin('#c99e66'), dune: lin('#d6b07a'), steppe: lin('#a49c58'), steppeDry: lin('#b8a468'), foret: lin('#4a6e32'),
-  foretDark: lin('#3a5a2a'), montagne: lin('#8a7f74'), rock: lin('#6e655c'), snow: lin('#f0f0f2'), sel: lin('#e6e2d6'),
-  town: lin('#b49b78'), field: lin('#7a5c3e'), road: lin('#9c8262'),
+  desert: lin('#d2a065'), dune: lin('#e2b97e'), steppe: lin('#b4a656'), steppeDry: lin('#c9b064'), foret: lin('#55803a'),
+  foretDark: lin('#3f6430'), montagne: lin('#9a8576'), rock: lin('#7a6a5e'), redRock: lin('#b05a36'), snow: lin('#f0f0f2'), sel: lin('#ece6d8'),
+  town: lin('#bfa47c'), field: lin('#7a5c3e'), road: lin('#a88a64'), bank: lin('#6f9a44'), wetSand: lin('#9c8460'), stone: lin('#8e8a80'),
 };
 const _gc = new T.Color(), _gt = new T.Color();
 function terrainColor(x, z, h, flat) {
@@ -556,7 +731,17 @@ function terrainColor(x, z, h, flat) {
   _gc.lerp(GROUND.sel, wSalt);
   // montagnes : roche, falaises dans les pentes, neige sur les sommets
   _gc.lerp(GROUND.montagne, smooth(0.62, 0.66, e));
-  _gc.lerp(GROUND.rock, smooth(0.86, 0.7, flat) * 0.85);
+  // falaises : rouges dans le désert, grises ailleurs
+  _gt.copy(GROUND.redRock).lerp(GROUND.rock, Math.max(wForest, smooth(0.62, 0.7, e)));
+  _gc.lerp(_gt, smooth(0.86, 0.7, flat) * 0.85);
+  // berges vertes et sable mouillé au bord de l'eau
+  if (RIVERS.length || LAKES.length) {
+    const wd = waterDist(x, z);
+    if (wd < 22) {
+      _gc.lerp(GROUND.bank, (1 - smooth(4, 22, wd)) * 0.75);
+      _gc.lerp(GROUND.wetSand, 1 - smooth(-1, 4, wd));
+    }
+  }
   _gc.lerp(GROUND.snow, smooth(40, 50, h) * smooth(0.7, 0.85, flat));
   // terre battue des villes, champs labourés
   for (const s of TERRAIN_SPOTS.sites) {
@@ -668,7 +853,8 @@ function buildDecor(rng, sites, nodeSpots) {
   const M = decorModels();
   const dummy = new T.Object3D();
   const col = new T.Color();
-  const blocked = (x, z) => sites.some(s => Math.hypot(s.x - x, s.z - z) < 55) || nodeSpots.some(n => Math.hypot(n.x - x, n.z - z) < 16) || onRoad(x, z) < 4;
+  const blocked = (x, z) => sites.some(s => Math.hypot(s.x - x, s.z - z) < 55) || nodeSpots.some(n => Math.hypot(n.x - x, n.z - z) < 16) || onRoad(x, z) < 4 ||
+    waterDist(x, z) < 1.5 || MESAS.some(m => Math.hypot(m.x - x, m.z - z) < m.r + 2);
   const scatter = (count, accept, place) => {
     const out = [];
     for (let t = 0; t < count * 6 && out.length < count; t++) {
